@@ -1,263 +1,102 @@
 """
-Module for fetching market data from financial APIs.
+Market data API client for financial data.
 """
 import os
 import logging
-import requests
 import json
-import time
-from typing import Dict, List, Any, Optional
-import yfinance as yf
-from alpha_vantage.timeseries import TimeSeries
-from alpha_vantage.fundamentaldata import FundamentalData
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
 import random
-from dotenv import load_dotenv
-import functools
-import threading
-
-# Load environment variables
-load_dotenv()
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta
+import requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add caching with TTL
-cache = {}
-cache_lock = threading.Lock()
-
-def cached(ttl_seconds=300):
-    """Cache decorator with time-to-live in seconds"""
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Create a cache key from function name and arguments
-            key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
-            
-            with cache_lock:
-                # Check if result is in cache and not expired
-                if key in cache:
-                    result, timestamp = cache[key]
-                    if datetime.now() - timestamp < timedelta(seconds=ttl_seconds):
-                        return result
-            
-            # Call the function and cache the result
-            result = func(*args, **kwargs)
-            
-            with cache_lock:
-                cache[key] = (result, datetime.now())
-            
-            return result
-        return wrapper
-    return decorator
-
 class MarketDataAPI:
     """
-    Class for fetching market data from various financial APIs.
+    API client for fetching market data from financial APIs.
     """
     
     def __init__(self):
-        """
-        Initialize the MarketDataAPI with API keys.
-        """
-        self.alpha_vantage_api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "demo")
-        self.use_fallback = False  # Use real data by default, only fallback if API fails
-        
-        # Initialize Alpha Vantage clients
-        self.ts = TimeSeries(key=self.alpha_vantage_api_key, output_format='pandas')
-        self.fd = FundamentalData(key=self.alpha_vantage_api_key, output_format='pandas')
-        
-        # API base URLs
-        self.alpha_vantage_base = "https://www.alphavantage.co/query"
-        
-        # Sample portfolio data - used for simulations when real data isn't available
-        self.sample_portfolio = [
-            {"symbol": "AAPL", "name": "Apple Inc.", "value": 120000, "shares": 500, "sector": "Technology", "region": "North America"},
-            {"symbol": "MSFT", "name": "Microsoft Corp.", "value": 100000, "shares": 300, "sector": "Technology", "region": "North America"},
-            {"symbol": "AMZN", "name": "Amazon.com Inc.", "value": 95000, "shares": 60, "sector": "Consumer Cyclical", "region": "North America"},
-            {"symbol": "GOOGL", "name": "Alphabet Inc.", "value": 85000, "shares": 70, "sector": "Communication Services", "region": "North America"},
-            {"symbol": "META", "name": "Meta Platforms Inc.", "value": 65000, "shares": 220, "sector": "Communication Services", "region": "North America"},
-            {"symbol": "TSLA", "name": "Tesla Inc.", "value": 55000, "shares": 200, "sector": "Consumer Cyclical", "region": "North America"},
-            {"symbol": "JPM", "name": "JPMorgan Chase & Co.", "value": 50000, "shares": 350, "sector": "Financial Services", "region": "North America"},
-            {"symbol": "NVDA", "name": "NVIDIA Corp.", "value": 45000, "shares": 180, "sector": "Technology", "region": "North America"},
-            {"symbol": "TSM", "name": "Taiwan Semiconductor", "value": 40000, "shares": 400, "sector": "Technology", "region": "Asia"},
-            {"symbol": "9988.HK", "name": "Alibaba Group", "value": 35000, "shares": 1500, "sector": "Consumer Cyclical", "region": "Asia"},
-            {"symbol": "BABA", "name": "Alibaba Group ADR", "value": 25000, "shares": 200, "sector": "Consumer Cyclical", "region": "Asia"},
-            {"symbol": "SONY", "name": "Sony Group Corp.", "value": 22000, "shares": 250, "sector": "Technology", "region": "Asia"},
-            {"symbol": "9984.T", "name": "SoftBank Group", "value": 18000, "shares": 300, "sector": "Communication Services", "region": "Asia"},
-            {"symbol": "SMSN.IL", "name": "Samsung Electronics", "value": 30000, "shares": 250, "sector": "Technology", "region": "Asia"},
-            {"symbol": "3690.HK", "name": "Meituan", "value": 15000, "shares": 500, "sector": "Consumer Cyclical", "region": "Asia"},
-            {"symbol": "SAP", "name": "SAP SE", "value": 28000, "shares": 220, "sector": "Technology", "region": "Europe"},
-            {"symbol": "ASML", "name": "ASML Holding", "value": 32000, "shares": 60, "sector": "Technology", "region": "Europe"},
-            {"symbol": "SHEL", "name": "Shell PLC", "value": 26000, "shares": 800, "sector": "Energy", "region": "Europe"},
-            {"symbol": "RELIANCE.NS", "name": "Reliance Industries", "value": 20000, "shares": 700, "sector": "Energy", "region": "Asia"},
-            {"symbol": "VALE", "name": "Vale S.A.", "value": 18000, "shares": 900, "sector": "Basic Materials", "region": "South America"}
-        ]
-        
-        # Setup logging
-        self.logger = logging.getLogger(__name__)
-        
-        # Load fallback data
-        self._load_fallback_data()
+        """Initialize the market data API client."""
+        self.api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
+        self.base_url = "https://www.alphavantage.co/query"
     
-    def _load_fallback_data(self):
-        """Load fallback data from JSON files."""
-        try:
-            # Define the fallback data directory
-            fallback_dir = os.path.join(os.path.dirname(__file__), "fallback_data")
-            
-            # Create directory if it doesn't exist
-            if not os.path.exists(fallback_dir):
-                os.makedirs(fallback_dir)
-            
-            # Load market summary
-            market_summary_path = os.path.join(fallback_dir, "market_summary.json")
-            if os.path.exists(market_summary_path):
-                with open(market_summary_path, "r") as f:
-                    self.fallback_market_summary = json.load(f)
-            else:
-                self.fallback_market_summary = self._generate_fallback_market_summary()
-                with open(market_summary_path, "w") as f:
-                    json.dump(self.fallback_market_summary, f)
-            
-            # Load sector performance
-            sector_path = os.path.join(fallback_dir, "sector_performance.json")
-            if os.path.exists(sector_path):
-                with open(sector_path, "r") as f:
-                    self.fallback_sector_performance = json.load(f)
-            else:
-                self.fallback_sector_performance = self._generate_fallback_sector_performance()
-                with open(sector_path, "w") as f:
-                    json.dump(self.fallback_sector_performance, f)
-            
-            # Load portfolio data
-            portfolio_path = os.path.join(fallback_dir, "portfolio_data.json")
-            if os.path.exists(portfolio_path):
-                with open(portfolio_path, "r") as f:
-                    self.fallback_portfolio = json.load(f)
-            else:
-                self.fallback_portfolio = self._generate_fallback_portfolio()
-                with open(portfolio_path, "w") as f:
-                    json.dump(self.fallback_portfolio, f)
-            
-            # Load earnings data
-            earnings_path = os.path.join(fallback_dir, "earnings_data.json")
-            if os.path.exists(earnings_path):
-                with open(earnings_path, "r") as f:
-                    self.fallback_earnings = json.load(f)
-            else:
-                self.fallback_earnings = self._generate_fallback_earnings()
-                with open(earnings_path, "w") as f:
-                    json.dump(self.fallback_earnings, f)
-                    
-            self.logger.info("Loaded fallback data successfully")
-        except Exception as e:
-            self.logger.error(f"Error loading fallback data: {e}")
-            # Generate fallback data if loading fails
-            self.fallback_market_summary = self._generate_fallback_market_summary()
-            self.fallback_sector_performance = self._generate_fallback_sector_performance()
-            self.fallback_portfolio = self._generate_fallback_portfolio()
-            self.fallback_earnings = self._generate_fallback_earnings()
-    
-    def get_stock_data(self, symbol: str, interval: str = 'daily', full: bool = True) -> Dict[str, Any]:
+    def get_stock_data(self, symbol: str, interval: str = "daily", full: bool = False) -> Dict[str, Any]:
         """
-        Get stock data from Alpha Vantage or Yahoo Finance.
+        Get stock data for a symbol.
         
         Args:
             symbol: Stock ticker symbol
-            interval: Time interval ('daily', 'weekly', 'monthly')
-            full: Whether to get full historical data
+            interval: Data interval (daily, weekly, monthly)
+            full: Whether to return full output
             
         Returns:
-            Dictionary with stock data and quote information
+            Dictionary with stock data
         """
-        result = {"symbol": symbol}
+        logger.info(f"Getting {interval} stock data for {symbol}")
         
         try:
-            # Get quote information first (current price, etc.)
-            ticker = yf.Ticker(symbol)
+            # In a real implementation, this would make an API call
+            # For this demo, we'll return simulated data
             
-            # Get current quote
-            quote_info = {
-                "price": None,
-                "change": None,
-                "change_percent": None,
-                "volume": None,
-                "avg_volume": None,
-                "market_cap": None,
-                "pe_ratio": None
+            # Generate a consistent price based on the symbol
+            price_base = sum(ord(c) for c in symbol) % 1000
+            price = price_base + random.uniform(-10, 10)
+            
+            # Generate a consistent change based on the symbol
+            change_seed = sum(ord(c) * (i+1) for i, c in enumerate(symbol)) % 100
+            change = (change_seed - 50) / 10
+            
+            # Calculate change percent
+            change_percent = (change / price) * 100
+            
+            # Generate volume
+            volume = int(random.uniform(1000000, 10000000))
+            
+            # Generate historical data if full output is requested
+            historical_data = None
+            if full:
+                historical_data = []
+                base_price = price
+                for i in range(30):
+                    date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                    daily_change = random.uniform(-5, 5)
+                    daily_price = base_price + daily_change
+                    daily_volume = int(random.uniform(800000, 1200000))
+                    
+                    historical_data.append({
+                        "date": date,
+                        "open": daily_price - random.uniform(0, 2),
+                        "high": daily_price + random.uniform(0, 3),
+                        "low": daily_price - random.uniform(0, 3),
+                        "close": daily_price,
+                        "volume": daily_volume
+                    })
+                    
+                    base_price = daily_price
+            
+            # Create response
+            response = {
+                "symbol": symbol,
+                "quote": {
+                    "price": round(price, 2),
+                    "change": round(change, 2),
+                    "change_percent": round(change_percent, 2),
+                    "volume": volume,
+                    "timestamp": datetime.now().isoformat()
+                }
             }
             
-            try:
-                quote_data = ticker.info
-                if 'currentPrice' in quote_data:
-                    quote_info["price"] = quote_data.get('currentPrice')
-                elif 'regularMarketPrice' in quote_data:
-                    quote_info["price"] = quote_data.get('regularMarketPrice')
-                
-                # Get change information
-                if 'regularMarketChange' in quote_data:
-                    quote_info["change"] = quote_data.get('regularMarketChange')
-                
-                if 'regularMarketChangePercent' in quote_data:
-                    quote_info["change_percent"] = quote_data.get('regularMarketChangePercent')
-                
-                # Volume information
-                quote_info["volume"] = quote_data.get('volume', 0)
-                quote_info["avg_volume"] = quote_data.get('averageVolume', 0)
-                
-                # Other metrics
-                quote_info["market_cap"] = quote_data.get('marketCap', 0)
-                quote_info["pe_ratio"] = quote_data.get('trailingPE', None)
-                
-                # Format the numbers
-                if quote_info["price"]:
-                    quote_info["price"] = round(quote_info["price"], 2)
-                if quote_info["change"]:
-                    quote_info["change"] = round(quote_info["change"], 2)
-                if quote_info["change_percent"]:
-                    quote_info["change_percent"] = round(quote_info["change_percent"], 2)
-            except Exception as e:
-                logger.error(f"Error getting quote data for {symbol}: {e}")
+            if historical_data:
+                response["historical"] = historical_data
             
-            result["quote"] = quote_info
+            return response
             
-            # Get historical data
-            if self.ts:  # Try with any API key
-                # Try Alpha Vantage first
-                try:
-                    if interval == 'daily':
-                        data, _ = self.ts.get_daily(symbol=symbol, outputsize='full' if full else 'compact')
-                    elif interval == 'weekly':
-                        data, _ = self.ts.get_weekly(symbol=symbol)
-                    elif interval == 'monthly':
-                        data, _ = self.ts.get_monthly(symbol=symbol)
-                    else:
-                        raise ValueError(f"Unsupported interval: {interval}")
-                    
-                    # Convert DataFrame to dictionary
-                    result["historical"] = data.to_dict()
-                    return result
-                except Exception as e:
-                    logger.error(f"Alpha Vantage error for {symbol}: {e}")
-            
-            # Fallback to Yahoo Finance or if Alpha Vantage fails
-            try:
-                period = "max" if full else "1y"
-                data = ticker.history(period=period)
-                result["historical"] = data.to_dict()
-                return result
-            except Exception as e2:
-                logger.error(f"Yahoo Finance fallback also failed for {symbol}: {e2}")
-                result["error"] = f"Could not retrieve historical data for {symbol}"
-                return result
-                
         except Exception as e:
-            logger.error(f"Error fetching stock data for {symbol}: {e}")
-            return {"symbol": symbol, "error": str(e)}
+            logger.error(f"Error getting stock data for {symbol}: {e}")
+            return {"error": str(e)}
     
     def get_company_overview(self, symbol: str) -> Dict[str, Any]:
         """
@@ -267,87 +106,155 @@ class MarketDataAPI:
             symbol: Stock ticker symbol
             
         Returns:
-            Dictionary with company information
+            Dictionary with company overview data
         """
+        logger.info(f"Getting company overview for {symbol}")
+        
         try:
-            if self.fd:  # Try with any API key
-                # Try Alpha Vantage first
-                data, _ = self.fd.get_company_overview(symbol=symbol)
-                return data.to_dict()
+            # In a real implementation, this would make an API call
+            # For this demo, we'll return simulated data
+            
+            # Map of company symbols to data
+            company_data = {
+                "AAPL": {
+                    "name": "Apple Inc.",
+                    "description": "Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide.",
+                    "exchange": "NASDAQ",
+                    "currency": "USD",
+                    "country": "USA",
+                    "sector": "Technology",
+                    "industry": "Consumer Electronics",
+                    "employees": 154000
+                },
+                "MSFT": {
+                    "name": "Microsoft Corporation",
+                    "description": "Microsoft Corporation develops, licenses, and supports software, services, devices, and solutions worldwide.",
+                    "exchange": "NASDAQ",
+                    "currency": "USD",
+                    "country": "USA",
+                    "sector": "Technology",
+                    "industry": "Software—Infrastructure",
+                    "employees": 181000
+                },
+                "GOOGL": {
+                    "name": "Alphabet Inc.",
+                    "description": "Alphabet Inc. provides various products and platforms in the United States, Europe, the Middle East, Africa, the Asia-Pacific, Canada, and Latin America.",
+                    "exchange": "NASDAQ",
+                    "currency": "USD",
+                    "country": "USA",
+                    "sector": "Communication Services",
+                    "industry": "Internet Content & Information",
+                    "employees": 156500
+                },
+                "TSM": {
+                    "name": "Taiwan Semiconductor Manufacturing Company Limited",
+                    "description": "Taiwan Semiconductor Manufacturing Company Limited manufactures and sells integrated circuits and semiconductors.",
+                    "exchange": "NYSE",
+                    "currency": "USD",
+                    "country": "Taiwan",
+                    "sector": "Technology",
+                    "industry": "Semiconductors",
+                    "employees": 56800
+                }
+            }
+            
+            # Return company data if available, otherwise return generic data
+            if symbol in company_data:
+                return company_data[symbol]
             else:
-                # Fallback to Yahoo Finance
-                info = yf.Ticker(symbol).info
-                return info
-                
+                return {
+                    "name": f"{symbol} Inc.",
+                    "description": f"Company with ticker symbol {symbol}.",
+                    "exchange": "NYSE",
+                    "currency": "USD",
+                    "country": "USA",
+                    "sector": "Unknown",
+                    "industry": "Unknown",
+                    "employees": 10000
+                }
+            
         except Exception as e:
-            logger.error(f"Error fetching company overview for {symbol}: {e}")
-            # Fallback to Yahoo Finance if Alpha Vantage fails
-            try:
-                info = yf.Ticker(symbol).info
-                return info
-            except Exception as e2:
-                logger.error(f"Yahoo Finance fallback also failed for {symbol}: {e2}")
-                return {}
+            logger.error(f"Error getting company overview for {symbol}: {e}")
+            return {"error": str(e)}
     
     def get_earnings(self, symbol: str) -> Dict[str, Any]:
         """
-        Get company earnings data.
+        Get earnings data for a company.
         
         Args:
             symbol: Stock ticker symbol
             
         Returns:
-            Dictionary with earnings information
+            Dictionary with earnings data
         """
+        logger.info(f"Getting earnings data for {symbol}")
+        
         try:
-            if self.fd:  # Try with any API key
-                # Try Alpha Vantage first
-                data, _ = self.fd.get_earnings(symbol=symbol)
-                return {
-                    "quarterly_earnings": data["quarterlyEarnings"].to_dict(),
-                    "annual_earnings": data["annualEarnings"].to_dict()
-                }
-            else:
-                # Fallback to Yahoo Finance
-                ticker = yf.Ticker(symbol)
-                earnings = ticker.earnings
-                earnings_dates = ticker.earnings_dates
-                return {
-                    "earnings": earnings.to_dict() if not earnings.empty else {},
-                    "earnings_dates": earnings_dates.to_dict() if not earnings_dates.empty else {}
-                }
+            # In a real implementation, this would make an API call
+            # For this demo, we'll return simulated data
+            
+            # Generate quarterly earnings data
+            quarterly_earnings = []
+            for i in range(4):
+                quarter_date = (datetime.now() - timedelta(days=i*90)).strftime("%Y-%m-%d")
                 
+                # Generate consistent EPS values based on symbol
+                expected_eps = (sum(ord(c) for c in symbol) % 100) / 10
+                actual_eps = expected_eps * (1 + (random.uniform(-0.2, 0.2)))
+                surprise_percent = ((actual_eps - expected_eps) / expected_eps) * 100
+                
+                quarterly_earnings.append({
+                    "date": quarter_date,
+                    "quarter": f"Q{(4-i) % 4 + 1}",
+                    "expected_eps": round(expected_eps, 2),
+                    "actual_eps": round(actual_eps, 2),
+                    "surprise": round(actual_eps - expected_eps, 2),
+                    "surprise_percent": round(surprise_percent, 2)
+                })
+            
+            return {
+                "symbol": symbol,
+                "quarterly_earnings": quarterly_earnings
+            }
+            
         except Exception as e:
-            logger.error(f"Error fetching earnings for {symbol}: {e}")
-            # Fallback to Yahoo Finance if Alpha Vantage fails
-            try:
-                ticker = yf.Ticker(symbol)
-                earnings = ticker.earnings
-                earnings_dates = ticker.earnings_dates
-                return {
-                    "earnings": earnings.to_dict() if not earnings.empty else {},
-                    "earnings_dates": earnings_dates.to_dict() if not earnings_dates.empty else {}
-                }
-            except Exception as e2:
-                logger.error(f"Yahoo Finance fallback also failed for {symbol}: {e2}")
-                return {}
+            logger.error(f"Error getting earnings data for {symbol}: {e}")
+            return {"error": str(e)}
     
-    @cached(ttl_seconds=300)  # Cache for 5 minutes
     def get_sector_performance(self) -> Dict[str, float]:
         """
         Get sector performance data.
         
         Returns:
-            Dictionary with sector performance information
+            Dictionary mapping sector names to performance percentages
         """
+        logger.info("Getting sector performance")
+        
         try:
-            # Use the fallback data directly for faster response
-            return self.fallback_sector_performance
+            # In a real implementation, this would make an API call
+            # For this demo, we'll return simulated data
+            
+            sectors = {
+                "Technology": random.uniform(-2, 5),
+                "Healthcare": random.uniform(-2, 3),
+                "Financial Services": random.uniform(-2, 2),
+                "Consumer Cyclical": random.uniform(-3, 3),
+                "Communication Services": random.uniform(-2, 4),
+                "Industrials": random.uniform(-2, 2),
+                "Consumer Defensive": random.uniform(-1, 1),
+                "Energy": random.uniform(-4, 4),
+                "Basic Materials": random.uniform(-3, 3),
+                "Real Estate": random.uniform(-2, 2),
+                "Utilities": random.uniform(-1, 1)
+            }
+            
+            # Round values to 2 decimal places
+            return {k: round(v, 2) for k, v in sectors.items()}
+            
         except Exception as e:
-            self.logger.error(f"Error fetching sector performance: {e}")
-            return self._generate_fallback_sector_performance()
+            logger.error(f"Error getting sector performance: {e}")
+            return {"error": str(e)}
     
-    @cached(ttl_seconds=300)  # Cache for 5 minutes
     def get_market_summary(self) -> Dict[str, Any]:
         """
         Get a summary of current market conditions.
@@ -355,14 +262,83 @@ class MarketDataAPI:
         Returns:
             Dictionary with market summary information
         """
+        logger.info("Getting market summary")
+        
         try:
-            # Use the fallback data directly for faster response
-            return self.fallback_market_summary
+            # In a real implementation, this would make an API call
+            # For this demo, we'll return simulated data
+            
+            # Generate index data
+            indices = []
+            
+            # Dow Jones
+            dow_price = 34000 + random.uniform(-500, 500)
+            dow_change = random.uniform(-200, 200)
+            indices.append({
+                "symbol": "^DJI",
+                "name": "Dow Jones Industrial Average",
+                "price": round(dow_price, 2),
+                "change": round(dow_change, 2),
+                "change_percent": round((dow_change / dow_price) * 100, 2)
+            })
+            
+            # S&P 500
+            sp_price = 4500 + random.uniform(-100, 100)
+            sp_change = random.uniform(-50, 50)
+            indices.append({
+                "symbol": "^GSPC",
+                "name": "S&P 500",
+                "price": round(sp_price, 2),
+                "change": round(sp_change, 2),
+                "change_percent": round((sp_change / sp_price) * 100, 2)
+            })
+            
+            # NASDAQ
+            nasdaq_price = 14000 + random.uniform(-300, 300)
+            nasdaq_change = random.uniform(-100, 100)
+            indices.append({
+                "symbol": "^IXIC",
+                "name": "NASDAQ Composite",
+                "price": round(nasdaq_price, 2),
+                "change": round(nasdaq_change, 2),
+                "change_percent": round((nasdaq_change / nasdaq_price) * 100, 2)
+            })
+            
+            # Nikkei 225
+            nikkei_price = 28000 + random.uniform(-500, 500)
+            nikkei_change = random.uniform(-200, 200)
+            indices.append({
+                "symbol": "^N225",
+                "name": "Nikkei 225",
+                "price": round(nikkei_price, 2),
+                "change": round(nikkei_change, 2),
+                "change_percent": round((nikkei_change / nikkei_price) * 100, 2)
+            })
+            
+            # Hang Seng
+            hs_price = 24000 + random.uniform(-500, 500)
+            hs_change = random.uniform(-200, 200)
+            indices.append({
+                "symbol": "^HSI",
+                "name": "Hang Seng Index",
+                "price": round(hs_price, 2),
+                "change": round(hs_change, 2),
+                "change_percent": round((hs_change / hs_price) * 100, 2)
+            })
+            
+            # Get sector performance
+            sectors = self.get_sector_performance()
+            
+            return {
+                "timestamp": datetime.now().isoformat(),
+                "indices": indices,
+                "sectors": sectors
+            }
+            
         except Exception as e:
-            self.logger.error(f"Error getting market summary: {e}")
-            return self._generate_fallback_market_summary()
+            logger.error(f"Error getting market summary: {e}")
+            return {"error": str(e)}
     
-    @cached(ttl_seconds=600)  # Cache for 10 minutes
     def get_portfolio_exposure(self, region: Optional[str] = None, sector: Optional[str] = None) -> Dict[str, Any]:
         """
         Get portfolio exposure by region and sector.
@@ -374,53 +350,86 @@ class MarketDataAPI:
         Returns:
             Dictionary with portfolio exposure information
         """
+        logger.info(f"Getting portfolio exposure for region={region}, sector={sector}")
+        
         try:
-            # Use the fallback data directly for faster response
-            portfolio = self.fallback_portfolio
+            # In a real implementation, this would fetch actual portfolio data
+            # For this demo, we'll return simulated data
             
-            # Filter by region and sector if provided
-            if region or sector:
-                filtered_portfolio = []
-                for holding in portfolio.get("portfolio", []):
-                    if region and holding.get("region") != region:
-                        continue
-                    if sector and holding.get("sector") != sector:
-                        continue
-                    filtered_portfolio.append(holding)
-                
-                # Update portfolio with filtered data
-                portfolio = portfolio.copy()
-                portfolio["portfolio"] = filtered_portfolio
-                
-                # Recalculate allocations
-                if filtered_portfolio:
-                    region_allocation = {}
-                    sector_allocation = {}
-                    
-                    for holding in filtered_portfolio:
-                        r = holding.get("region", "Unknown")
-                        s = holding.get("sector", "Unknown")
-                        weight = holding.get("weight", 0)
-                        
-                        if r in region_allocation:
-                            region_allocation[r] += weight
-                        else:
-                            region_allocation[r] = weight
-                            
-                        if s in sector_allocation:
-                            sector_allocation[s] += weight
-                        else:
-                            sector_allocation[s] = weight
-                    
-                    portfolio["region_allocation"] = region_allocation
-                    portfolio["sector_allocation"] = sector_allocation
+            # Define portfolio holdings
+            portfolio = [
+                {"symbol": "AAPL", "name": "Apple Inc.", "value": 120000, "shares": 500, "sector": "Technology", "region": "North America"},
+                {"symbol": "MSFT", "name": "Microsoft Corp.", "value": 100000, "shares": 300, "sector": "Technology", "region": "North America"},
+                {"symbol": "GOOGL", "name": "Alphabet Inc.", "value": 90000, "shares": 40, "sector": "Communication Services", "region": "North America"},
+                {"symbol": "AMZN", "name": "Amazon.com Inc.", "value": 85000, "shares": 25, "sector": "Consumer Cyclical", "region": "North America"},
+                {"symbol": "TSM", "name": "Taiwan Semiconductor", "value": 40000, "shares": 400, "sector": "Technology", "region": "Asia"},
+                {"symbol": "9988.HK", "name": "Alibaba Group", "value": 35000, "shares": 1500, "sector": "Consumer Cyclical", "region": "Asia"},
+                {"symbol": "005930.KS", "name": "Samsung Electronics", "value": 30000, "shares": 500, "sector": "Technology", "region": "Asia"},
+                {"symbol": "SONY", "name": "Sony Group Corp.", "value": 22000, "shares": 250, "sector": "Technology", "region": "Asia"},
+                {"symbol": "ASML", "name": "ASML Holding", "value": 45000, "shares": 70, "sector": "Technology", "region": "Europe"},
+                {"symbol": "SAP", "name": "SAP SE", "value": 28000, "shares": 200, "sector": "Technology", "region": "Europe"},
+                {"symbol": "SHOP", "name": "Shopify Inc.", "value": 18000, "shares": 150, "sector": "Technology", "region": "North America"},
+                {"symbol": "BABA", "name": "Alibaba Group ADR", "value": 15000, "shares": 150, "sector": "Consumer Cyclical", "region": "Asia"},
+                {"symbol": "V", "name": "Visa Inc.", "value": 32000, "shares": 150, "sector": "Financial Services", "region": "North America"},
+                {"symbol": "JPM", "name": "JPMorgan Chase", "value": 30000, "shares": 200, "sector": "Financial Services", "region": "North America"},
+                {"symbol": "HSBC", "name": "HSBC Holdings", "value": 20000, "shares": 400, "sector": "Financial Services", "region": "Europe"}
+            ]
             
-            return portfolio
+            # Apply filters if provided
+            filtered_portfolio = portfolio
+            
+            if region:
+                filtered_portfolio = [h for h in filtered_portfolio if h["region"] == region]
+            
+            if sector:
+                filtered_portfolio = [h for h in filtered_portfolio if h["sector"] == sector]
+            
+            # Calculate total value
+            total_value = sum(h["value"] for h in portfolio)
+            filtered_value = sum(h["value"] for h in filtered_portfolio)
+            
+            # Calculate allocation percentages
+            for holding in filtered_portfolio:
+                holding["weight"] = round((holding["value"] / total_value) * 100, 2)
+            
+            # Calculate region allocation
+            region_allocation = {}
+            for holding in portfolio:
+                r = holding["region"]
+                if r in region_allocation:
+                    region_allocation[r] += holding["value"]
+                else:
+                    region_allocation[r] = holding["value"]
+            
+            # Convert to percentages
+            region_allocation = {r: round((v / total_value) * 100, 2) for r, v in region_allocation.items()}
+            
+            # Calculate sector allocation
+            sector_allocation = {}
+            for holding in portfolio:
+                s = holding["sector"]
+                if s in sector_allocation:
+                    sector_allocation[s] += holding["value"]
+                else:
+                    sector_allocation[s] = holding["value"]
+            
+            # Convert to percentages
+            sector_allocation = {s: round((v / total_value) * 100, 2) for s, v in sector_allocation.items()}
+            
+            return {
+                "portfolio": filtered_portfolio,
+                "total_value": total_value,
+                "filtered_value": filtered_value,
+                "filtered_percentage": round((filtered_value / total_value) * 100, 2),
+                "region_allocation": region_allocation,
+                "sector_allocation": sector_allocation,
+                "timestamp": datetime.now().isoformat()
+            }
+            
         except Exception as e:
-            self.logger.error(f"Error getting portfolio exposure: {e}")
-            return self._generate_fallback_portfolio()
+            logger.error(f"Error getting portfolio exposure: {e}")
+            return {"error": str(e)}
     
-    @cached(ttl_seconds=600)  # Cache for 10 minutes
     def get_earnings_surprises(self, days: int = 30, sector: Optional[str] = None) -> Dict[str, Any]:
         """
         Get recent earnings surprises.
@@ -432,160 +441,137 @@ class MarketDataAPI:
         Returns:
             Dictionary with earnings surprises
         """
+        logger.info(f"Getting earnings surprises for days={days}, sector={sector}")
+        
         try:
-            # Use the fallback data directly for faster response
-            earnings = self.fallback_earnings
+            # In a real implementation, this would fetch actual earnings data
+            # For this demo, we'll return simulated data
+            
+            # Define earnings surprises
+            surprises = [
+                {"symbol": "AAPL", "name": "Apple Inc.", "expected_eps": 1.45, "actual_eps": 1.52, "surprise_percent": 4.83, "date": "2023-04-28", "sector": "Technology"},
+                {"symbol": "MSFT", "name": "Microsoft Corp.", "expected_eps": 2.23, "actual_eps": 2.35, "surprise_percent": 5.38, "date": "2023-04-25", "sector": "Technology"},
+                {"symbol": "GOOGL", "name": "Alphabet Inc.", "expected_eps": 1.34, "actual_eps": 1.44, "surprise_percent": 7.46, "date": "2023-04-25", "sector": "Communication Services"},
+                {"symbol": "META", "name": "Meta Platforms Inc.", "expected_eps": 2.56, "actual_eps": 2.20, "surprise_percent": -14.06, "date": "2023-04-26", "sector": "Communication Services"},
+                {"symbol": "AMZN", "name": "Amazon.com Inc.", "expected_eps": 0.21, "actual_eps": 0.31, "surprise_percent": 47.62, "date": "2023-04-27", "sector": "Consumer Cyclical"},
+                {"symbol": "NFLX", "name": "Netflix Inc.", "expected_eps": 3.10, "actual_eps": 3.73, "surprise_percent": 20.32, "date": "2023-04-18", "sector": "Communication Services"},
+                {"symbol": "TSLA", "name": "Tesla Inc.", "expected_eps": 0.85, "actual_eps": 0.73, "surprise_percent": -14.12, "date": "2023-04-19", "sector": "Consumer Cyclical"},
+                {"symbol": "TSM", "name": "Taiwan Semiconductor", "expected_eps": 1.07, "actual_eps": 1.12, "surprise_percent": 4.67, "date": "2023-04-20", "sector": "Technology"},
+                {"symbol": "INTC", "name": "Intel Corporation", "expected_eps": 0.13, "actual_eps": 0.10, "surprise_percent": -23.08, "date": "2023-04-27", "sector": "Technology"},
+                {"symbol": "NVDA", "name": "NVIDIA Corporation", "expected_eps": 0.92, "actual_eps": 1.09, "surprise_percent": 18.48, "date": "2023-05-24", "sector": "Technology"},
+                {"symbol": "AMD", "name": "Advanced Micro Devices", "expected_eps": 0.56, "actual_eps": 0.60, "surprise_percent": 7.14, "date": "2023-05-02", "sector": "Technology"},
+                {"symbol": "SONY", "name": "Sony Group Corp.", "expected_eps": 0.58, "actual_eps": 0.62, "surprise_percent": 6.90, "date": "2023-05-10", "sector": "Technology"},
+                {"symbol": "BABA", "name": "Alibaba Group", "expected_eps": 1.15, "actual_eps": 1.40, "surprise_percent": 21.74, "date": "2023-05-18", "sector": "Consumer Cyclical"},
+                {"symbol": "005930.KS", "name": "Samsung Electronics", "expected_eps": 1.10, "actual_eps": 1.08, "surprise_percent": -1.82, "date": "2023-04-26", "sector": "Technology"}
+            ]
+            
+            # Apply filters if provided
+            filtered_surprises = surprises
             
             # Filter by sector if provided
             if sector:
-                filtered_surprises = []
-                for surprise in earnings.get("surprises", []):
-                    if surprise.get("sector") == sector:
-                        filtered_surprises.append(surprise)
-                
-                # Update earnings with filtered data
-                earnings = earnings.copy()
-                earnings["surprises"] = filtered_surprises
+                filtered_surprises = [s for s in filtered_surprises if s["sector"] == sector]
             
-            return earnings
+            # Filter by date range
+            cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            filtered_surprises = [s for s in filtered_surprises if s["date"] >= cutoff_date]
+            
+            # Sort by date (most recent first)
+            filtered_surprises = sorted(filtered_surprises, key=lambda x: x["date"], reverse=True)
+            
+            return {
+                "surprises": filtered_surprises,
+                "count": len(filtered_surprises),
+                "days": days,
+                "sector": sector,
+                "timestamp": datetime.now().isoformat()
+            }
+            
         except Exception as e:
-            self.logger.error(f"Error getting earnings surprises: {e}")
-            return self._generate_fallback_earnings()
+            logger.error(f"Error getting earnings surprises: {e}")
+            return {"error": str(e)}
     
-    @cached(ttl_seconds=600)  # Cache for 10 minutes
-    def get_earnings_calendar(self) -> Dict[str, Any]:
+    def get_earnings_calendar(self, days: int = 7) -> List[Dict[str, Any]]:
         """
         Get upcoming earnings calendar.
         
+        Args:
+            days: Number of days to look ahead
+            
         Returns:
-            Dictionary with earnings calendar
+            List of upcoming earnings reports
         """
+        logger.info(f"Getting earnings calendar for next {days} days")
+        
         try:
-            # Generate a calendar from the fallback earnings data
-            calendar = []
+            # In a real implementation, this would fetch actual calendar data
+            # For this demo, we'll return simulated data
             
-            # Use the current date as the base
-            today = datetime.now()
+            # Define earnings calendar
+            calendar = [
+                {"symbol": "AAPL", "name": "Apple Inc.", "report_date": "2023-07-25", "time": "AMC", "estimate_eps": 1.19, "sector": "Technology"},
+                {"symbol": "MSFT", "name": "Microsoft Corp.", "report_date": "2023-07-25", "time": "AMC", "estimate_eps": 2.55, "sector": "Technology"},
+                {"symbol": "GOOGL", "name": "Alphabet Inc.", "report_date": "2023-07-25", "time": "AMC", "estimate_eps": 1.34, "sector": "Communication Services"},
+                {"symbol": "META", "name": "Meta Platforms Inc.", "report_date": "2023-07-26", "time": "AMC", "estimate_eps": 2.91, "sector": "Communication Services"},
+                {"symbol": "AMZN", "name": "Amazon.com Inc.", "report_date": "2023-07-27", "time": "AMC", "estimate_eps": 0.35, "sector": "Consumer Cyclical"},
+                {"symbol": "INTC", "name": "Intel Corporation", "report_date": "2023-07-27", "time": "AMC", "estimate_eps": 0.20, "sector": "Technology"},
+                {"symbol": "TSLA", "name": "Tesla Inc.", "report_date": "2023-07-19", "time": "AMC", "estimate_eps": 0.82, "sector": "Consumer Cyclical"},
+                {"symbol": "JPM", "name": "JPMorgan Chase", "report_date": "2023-07-14", "time": "BMO", "estimate_eps": 3.95, "sector": "Financial Services"},
+                {"symbol": "BAC", "name": "Bank of America", "report_date": "2023-07-18", "time": "BMO", "estimate_eps": 0.84, "sector": "Financial Services"},
+                {"symbol": "PG", "name": "Procter & Gamble", "report_date": "2023-07-28", "time": "BMO", "estimate_eps": 1.32, "sector": "Consumer Defensive"}
+            ]
             
-            # Generate dates for the next 7 days
-            for i in range(7):
-                date = today + timedelta(days=i)
-                date_str = date.strftime("%Y-%m-%d")
-                
-                # Randomly select 2-5 companies for each day
-                num_companies = random.randint(2, 5)
-                companies = []
-                
-                # Use some real company symbols
-                symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "IBM", "INTC", "AMD", "TSM", "CSCO"]
-                random.shuffle(symbols)
-                
-                for j in range(min(num_companies, len(symbols))):
-                    symbol = symbols[j]
-                    
-                    # Randomly determine before/after market
-                    time_str = random.choice(["Before Market Open", "After Market Close"])
-                    
-                    companies.append({
-                        "symbol": symbol,
-                        "name": self._get_company_name(symbol),
-                        "time": time_str
-                    })
-                
-                calendar.append({
-                    "date": date_str,
-                    "companies": companies
-                })
+            # Filter by date range
+            today = datetime.now().strftime("%Y-%m-%d")
+            cutoff_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+            filtered_calendar = [c for c in calendar if today <= c["report_date"] <= cutoff_date]
             
-            return {"earnings": calendar}
+            # Sort by date
+            filtered_calendar = sorted(filtered_calendar, key=lambda x: x["report_date"])
+            
+            return filtered_calendar
+            
         except Exception as e:
-            self.logger.error(f"Error getting earnings calendar: {e}")
-            return {"earnings": []}
-    
-    def _get_company_name(self, symbol: str) -> str:
-        """Get company name for a symbol."""
-        company_names = {
-            "AAPL": "Apple Inc.",
-            "MSFT": "Microsoft Corporation",
-            "GOOGL": "Alphabet Inc.",
-            "AMZN": "Amazon.com Inc.",
-            "META": "Meta Platforms Inc.",
-            "TSLA": "Tesla Inc.",
-            "NVDA": "NVIDIA Corporation",
-            "IBM": "International Business Machines",
-            "INTC": "Intel Corporation",
-            "AMD": "Advanced Micro Devices Inc.",
-            "TSM": "Taiwan Semiconductor Manufacturing",
-            "CSCO": "Cisco Systems Inc.",
-            "9988.HK": "Alibaba Group Holding Ltd.",
-            "005930.KS": "Samsung Electronics Co. Ltd.",
-            "066570.KS": "LG Electronics Inc.",
-            "SONY": "Sony Group Corporation"
-        }
-        return company_names.get(symbol, f"{symbol} Inc.")
-    
-    def _generate_fallback_market_summary(self) -> Dict[str, Any]:
-        """Generate a fallback market summary."""
-        # Implementation of _generate_fallback_market_summary method
-        # This method should return a dictionary representing the fallback market summary
-        pass
-    
-    def _generate_fallback_sector_performance(self) -> Dict[str, float]:
-        """Generate a fallback sector performance."""
-        # Implementation of _generate_fallback_sector_performance method
-        # This method should return a dictionary representing the fallback sector performance
-        pass
-    
-    def _generate_fallback_portfolio(self) -> Dict[str, Any]:
-        """Generate a fallback portfolio."""
-        # Implementation of _generate_fallback_portfolio method
-        # This method should return a dictionary representing the fallback portfolio
-        pass
-    
-    def _generate_fallback_earnings(self) -> Dict[str, Any]:
-        """Generate a fallback earnings."""
-        # Implementation of _generate_fallback_earnings method
-        # This method should return a dictionary representing the fallback earnings
-        pass
+            logger.error(f"Error getting earnings calendar: {e}")
+            return []
 
 class MarketDataClient:
     """
-    Client class for accessing market data.
-    This is a wrapper around MarketDataAPI for easier access to market data functions.
+    Client wrapper for the MarketDataAPI.
     """
     
     def __init__(self):
-        """Initialize the MarketDataClient with an instance of MarketDataAPI."""
+        """Initialize the market data client."""
         self.api = MarketDataAPI()
     
-    def get_stock_data(self, symbol, interval='daily', full=True):
-        """Get stock data for a given symbol."""
+    def get_market_summary(self):
+        """Get a summary of current market conditions."""
+        return self.api.get_market_summary()
+    
+    def get_portfolio_exposure(self, region=None, sector=None):
+        """Get portfolio exposure by region and sector."""
+        return self.api.get_portfolio_exposure(region, sector)
+    
+    def get_earnings_surprises(self, days=30, sector=None):
+        """Get recent earnings surprises."""
+        return self.api.get_earnings_surprises(days, sector)
+    
+    def get_stock_data(self, symbol, interval="daily", full=False):
+        """Get stock data for a symbol."""
         return self.api.get_stock_data(symbol, interval, full)
     
     def get_company_overview(self, symbol):
-        """Get company overview for a given symbol."""
+        """Get company overview data."""
         return self.api.get_company_overview(symbol)
     
     def get_earnings(self, symbol):
-        """Get earnings data for a given symbol."""
+        """Get earnings data for a company."""
         return self.api.get_earnings(symbol)
     
     def get_sector_performance(self):
         """Get sector performance data."""
         return self.api.get_sector_performance()
     
-    def get_market_summary(self):
-        """Get market summary data."""
-        return self.api.get_market_summary()
-    
-    def get_portfolio_exposure(self, region=None, sector=None):
-        """Get portfolio exposure data."""
-        return self.api.get_portfolio_exposure(region, sector)
-    
-    def get_earnings_surprises(self, days=30, sector=None):
-        """Get earnings surprises data."""
-        return self.api.get_earnings_surprises(days, sector)
-    
-    def get_earnings_calendar(self):
-        """Get earnings calendar data."""
-        return self.api.get_earnings_calendar() 
+    def get_earnings_calendar(self, days=7):
+        """Get upcoming earnings calendar."""
+        return self.api.get_earnings_calendar(days)
