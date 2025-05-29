@@ -583,4 +583,4 @@ if __name__ == "__main__":
     
     # Test portfolio analysis
     portfolio_analysis = agent.analyze_portfolio(portfolio_data)
-    print(f"Portfolio Analysis: {json.dumps(portfolio_analysis, indent=2)}") 
+    print(f"Portfolio Analysis: {json.dumps(portfolio_analysis, indent=2)}")
