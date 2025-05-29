@@ -1,0 +1,43 @@
+# API and Web Framework
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.10.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Web Interface
+streamlit>=1.39.0
+
+# NLP and Machine Learning
+transformers>=4.36.0
+torch>=2.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Audio Processing
+soundfile>=0.12.1
+gtts>=2.5.0
+pydub>=0.25.1
+librosa>=0.10.1
+webrtcvad>=2.0.10
+
+# Data Processing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+yfinance>=0.2.35
+alpha_vantage>=2.3.1
+
+# Vector Database
+faiss-cpu>=1.7.0
+sentence-transformers>=2.5.0
+
+# LLM Integration
+langchain>=0.1.0
+langgraph>=0.0.20
+
+# Agent Frameworks
+crewai>=0.28.0
+
+# Utilities
+tqdm>=4.66.0
+python-multipart>=0.0.6
