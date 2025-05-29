@@ -546,4 +546,46 @@ class MarketDataAPI:
         """Generate a fallback earnings."""
         # Implementation of _generate_fallback_earnings method
         # This method should return a dictionary representing the fallback earnings
-        pass 
+        pass
+
+class MarketDataClient:
+    """
+    Client class for accessing market data.
+    This is a wrapper around MarketDataAPI for easier access to market data functions.
+    """
+    
+    def __init__(self):
+        """Initialize the MarketDataClient with an instance of MarketDataAPI."""
+        self.api = MarketDataAPI()
+    
+    def get_stock_data(self, symbol, interval='daily', full=True):
+        """Get stock data for a given symbol."""
+        return self.api.get_stock_data(symbol, interval, full)
+    
+    def get_company_overview(self, symbol):
+        """Get company overview for a given symbol."""
+        return self.api.get_company_overview(symbol)
+    
+    def get_earnings(self, symbol):
+        """Get earnings data for a given symbol."""
+        return self.api.get_earnings(symbol)
+    
+    def get_sector_performance(self):
+        """Get sector performance data."""
+        return self.api.get_sector_performance()
+    
+    def get_market_summary(self):
+        """Get market summary data."""
+        return self.api.get_market_summary()
+    
+    def get_portfolio_exposure(self, region=None, sector=None):
+        """Get portfolio exposure data."""
+        return self.api.get_portfolio_exposure(region, sector)
+    
+    def get_earnings_surprises(self, days=30, sector=None):
+        """Get earnings surprises data."""
+        return self.api.get_earnings_surprises(days, sector)
+    
+    def get_earnings_calendar(self):
+        """Get earnings calendar data."""
+        return self.api.get_earnings_calendar() 
