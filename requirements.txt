@@ -38,6 +38,10 @@ langgraph>=0.0.20
 # Agent Frameworks
 crewai>=0.28.0
 
+# Visualization
+plotly>=5.18.0
+matplotlib>=3.7.0
+
 # Utilities
 tqdm>=4.66.0
 python-multipart>=0.0.6
