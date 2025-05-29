@@ -26,12 +26,13 @@ class AnalysisAgent:
         """Initialize the analysis agent."""
         self.agent_id = "analysis_agent"
     
-    def analyze_portfolio(self, portfolio_data):
+    def analyze_portfolio(self, portfolio_data, query=None):
         """
         Analyze portfolio data to extract insights.
         
         Args:
             portfolio_data: Portfolio data including holdings, allocations, etc.
+            query: Optional query string to focus the analysis
             
         Returns:
             Dictionary with portfolio analysis results
@@ -51,47 +52,55 @@ class AnalysisAgent:
             
             # Calculate total portfolio value
             total_value = 0
-            for holding in portfolio_data.get("holdings", []):
+            for holding in portfolio_data.get("portfolio", []):
                 value = holding.get("value", 0)
                 total_value += value
             
             results["total_value"] = total_value
             
-            # Calculate sector allocation
-            sector_allocation = {}
-            for holding in portfolio_data.get("holdings", []):
-                sector = holding.get("sector", "Unknown")
-                value = holding.get("value", 0)
-                if sector in sector_allocation:
-                    sector_allocation[sector] += value
-                else:
-                    sector_allocation[sector] = value
+            # Extract existing sector and region allocations if available
+            if "sector_allocation" in portfolio_data:
+                results["sector_allocation"] = portfolio_data["sector_allocation"]
+            else:
+                # Calculate sector allocation
+                sector_allocation = {}
+                for holding in portfolio_data.get("portfolio", []):
+                    sector = holding.get("sector", "Unknown")
+                    value = holding.get("value", 0)
+                    if sector in sector_allocation:
+                        sector_allocation[sector] += value
+                    else:
+                        sector_allocation[sector] = value
+                
+                # Convert to percentages
+                for sector, value in sector_allocation.items():
+                    sector_allocation[sector] = round((value / total_value) * 100, 2) if total_value > 0 else 0
+                
+                results["sector_allocation"] = sector_allocation
             
-            # Convert to percentages
-            for sector, value in sector_allocation.items():
-                sector_allocation[sector] = round((value / total_value) * 100, 2) if total_value > 0 else 0
-            
-            results["sector_allocation"] = sector_allocation
-            
-            # Calculate region allocation
-            region_allocation = {}
-            for holding in portfolio_data.get("holdings", []):
-                region = holding.get("region", "Unknown")
-                value = holding.get("value", 0)
-                if region in region_allocation:
-                    region_allocation[region] += value
-                else:
-                    region_allocation[region] = value
-            
-            # Convert to percentages
-            for region, value in region_allocation.items():
-                region_allocation[region] = round((value / total_value) * 100, 2) if total_value > 0 else 0
-            
-            results["region_allocation"] = region_allocation
+            # Extract existing region allocation if available
+            if "region_allocation" in portfolio_data:
+                results["region_allocation"] = portfolio_data["region_allocation"]
+            else:
+                # Calculate region allocation
+                region_allocation = {}
+                for holding in portfolio_data.get("portfolio", []):
+                    region = holding.get("region", "Unknown")
+                    value = holding.get("value", 0)
+                    if region in region_allocation:
+                        region_allocation[region] += value
+                    else:
+                        region_allocation[region] = value
+                
+                # Convert to percentages
+                for region, value in region_allocation.items():
+                    region_allocation[region] = round((value / total_value) * 100, 2) if total_value > 0 else 0
+                
+                results["region_allocation"] = region_allocation
             
             # Get top holdings
             top_holdings = sorted(
-                portfolio_data.get("holdings", []),
+                portfolio_data.get("portfolio", []),
                 key=lambda x: x.get("value", 0),
                 reverse=True
             )[:5]  # Top 5 holdings
@@ -101,50 +110,103 @@ class AnalysisAgent:
                     "symbol": holding.get("symbol", ""),
                     "name": holding.get("name", ""),
                     "value": holding.get("value", 0),
-                    "weight": round((holding.get("value", 0) / total_value) * 100, 2) if total_value > 0 else 0
+                    "weight": round((holding.get("value", 0) / total_value) * 100, 2) if total_value > 0 else 0,
+                    "sector": holding.get("sector", ""),
+                    "region": holding.get("region", "")
                 }
                 for holding in top_holdings
             ]
             
-            # Basic risk metrics
-            # In a real implementation, these would be calculated from historical data
-            results["risk_metrics"] = {
-                "volatility": portfolio_data.get("volatility", 0),
-                "beta": portfolio_data.get("beta", 0),
-                "sharpe_ratio": portfolio_data.get("sharpe_ratio", 0),
-                "max_drawdown": portfolio_data.get("max_drawdown", 0)
-            }
-            
-            # Performance metrics
-            results["performance"] = {
-                "daily_return": portfolio_data.get("daily_return", 0),
-                "weekly_return": portfolio_data.get("weekly_return", 0),
-                "monthly_return": portfolio_data.get("monthly_return", 0),
-                "ytd_return": portfolio_data.get("ytd_return", 0),
-                "annual_return": portfolio_data.get("annual_return", 0)
-            }
+            # Focus analysis based on query if provided
+            if query:
+                query_lower = query.lower()
+                
+                # Check for region focus
+                if "asia" in query_lower:
+                    results["focus_region"] = "Asia"
+                    # Filter holdings by Asia region
+                    asia_holdings = [h for h in portfolio_data.get("portfolio", []) if h.get("region") == "Asia"]
+                    asia_value = sum(h.get("value", 0) for h in asia_holdings)
+                    results["focus_value"] = asia_value
+                    results["focus_percentage"] = round((asia_value / total_value) * 100, 2) if total_value > 0 else 0
+                    results["focus_holdings"] = sorted(asia_holdings, key=lambda x: x.get("value", 0), reverse=True)
+                    
+                    # Calculate sector breakdown within Asia
+                    asia_sectors = {}
+                    for holding in asia_holdings:
+                        sector = holding.get("sector", "Unknown")
+                        value = holding.get("value", 0)
+                        if sector in asia_sectors:
+                            asia_sectors[sector] += value
+                        else:
+                            asia_sectors[sector] = value
+                    
+                    # Convert to percentages
+                    for sector, value in asia_sectors.items():
+                        asia_sectors[sector] = round((value / asia_value) * 100, 2) if asia_value > 0 else 0
+                    
+                    results["focus_sectors"] = asia_sectors
+                
+                # Check for sector focus
+                if "tech" in query_lower or "technology" in query_lower:
+                    results["focus_sector"] = "Technology"
+                    # Filter holdings by Technology sector
+                    tech_holdings = [h for h in portfolio_data.get("portfolio", []) if h.get("sector") == "Technology"]
+                    tech_value = sum(h.get("value", 0) for h in tech_holdings)
+                    results["focus_value"] = tech_value
+                    results["focus_percentage"] = round((tech_value / total_value) * 100, 2) if total_value > 0 else 0
+                    results["focus_holdings"] = sorted(tech_holdings, key=lambda x: x.get("value", 0), reverse=True)
+                    
+                    # Calculate region breakdown within Technology
+                    tech_regions = {}
+                    for holding in tech_holdings:
+                        region = holding.get("region", "Unknown")
+                        value = holding.get("value", 0)
+                        if region in tech_regions:
+                            tech_regions[region] += value
+                        else:
+                            tech_regions[region] = value
+                    
+                    # Convert to percentages
+                    for region, value in tech_regions.items():
+                        tech_regions[region] = round((value / tech_value) * 100, 2) if tech_value > 0 else 0
+                    
+                    results["focus_regions"] = tech_regions
+                
+                # Check for combined focus (Asia tech)
+                if "asia" in query_lower and ("tech" in query_lower or "technology" in query_lower):
+                    results["focus_combined"] = "Asia Technology"
+                    # Filter holdings by Asia region and Technology sector
+                    asia_tech_holdings = [
+                        h for h in portfolio_data.get("portfolio", []) 
+                        if h.get("region") == "Asia" and h.get("sector") == "Technology"
+                    ]
+                    asia_tech_value = sum(h.get("value", 0) for h in asia_tech_holdings)
+                    results["focus_value"] = asia_tech_value
+                    results["focus_percentage"] = round((asia_tech_value / total_value) * 100, 2) if total_value > 0 else 0
+                    results["focus_holdings"] = sorted(asia_tech_holdings, key=lambda x: x.get("value", 0), reverse=True)
+                
+                # Check for risk focus
+                if "risk" in query_lower or "exposure" in query_lower:
+                    results["focus_risk"] = True
+                    # In a real implementation, this would include more detailed risk metrics
             
             logger.info("Portfolio analysis completed successfully")
-            return {
-                "success": True,
-                "analysis": results,
-                "error": None
-            }
+            return results
             
         except Exception as e:
             logger.error(f"Error analyzing portfolio: {e}")
             return {
-                "success": False,
-                "analysis": None,
                 "error": f"Error analyzing portfolio: {str(e)}"
             }
     
-    def analyze_market_data(self, market_data):
+    def analyze_market(self, market_data, query=None):
         """
         Analyze market data to extract insights.
         
         Args:
             market_data: Market data including indices, sectors, etc.
+            query: Optional query string to focus the analysis
             
         Returns:
             Dictionary with market analysis results
@@ -156,65 +218,92 @@ class AnalysisAgent:
             results = {
                 "indices_performance": {},
                 "sector_performance": {},
-                "top_gainers": [],
-                "top_losers": [],
-                "market_breadth": {},
-                "volatility": {}
+                "market_sentiment": "",
+                "key_insights": []
             }
             
             # Process indices performance
-            for name, data in market_data.get("indices", {}).items():
+            indices = market_data.get("indices", [])
+            for index in indices:
+                name = index.get("name", "Unknown")
                 results["indices_performance"][name] = {
-                    "price": data.get("price", 0),
-                    "change": data.get("change", 0),
-                    "change_percent": data.get("change_percent", 0)
+                    "price": index.get("price", 0),
+                    "change": index.get("change", 0),
+                    "change_percent": index.get("change_percent", 0)
                 }
             
             # Process sector performance
             results["sector_performance"] = market_data.get("sectors", {})
             
-            # Process top gainers and losers
-            results["top_gainers"] = market_data.get("gainers", [])[:5]  # Top 5 gainers
-            results["top_losers"] = market_data.get("losers", [])[:5]  # Top 5 losers
+            # Determine overall market sentiment
+            positive_sectors = sum(1 for _, perf in results["sector_performance"].items() if perf > 0)
+            total_sectors = len(results["sector_performance"])
+            positive_indices = sum(1 for _, data in results["indices_performance"].items() if data.get("change_percent", 0) > 0)
+            total_indices = len(results["indices_performance"])
             
-            # Market breadth metrics
-            results["market_breadth"] = {
-                "advancing_issues": market_data.get("advancing_issues", 0),
-                "declining_issues": market_data.get("declining_issues", 0),
-                "advancing_volume": market_data.get("advancing_volume", 0),
-                "declining_volume": market_data.get("declining_volume", 0),
-                "new_highs": market_data.get("new_highs", 0),
-                "new_lows": market_data.get("new_lows", 0)
-            }
+            if positive_sectors > total_sectors * 0.7 and positive_indices > total_indices * 0.7:
+                results["market_sentiment"] = "strongly bullish"
+            elif positive_sectors > total_sectors * 0.5 and positive_indices > total_indices * 0.5:
+                results["market_sentiment"] = "bullish"
+            elif positive_sectors < total_sectors * 0.3 and positive_indices < total_indices * 0.3:
+                results["market_sentiment"] = "strongly bearish"
+            elif positive_sectors < total_sectors * 0.5 and positive_indices < total_indices * 0.5:
+                results["market_sentiment"] = "bearish"
+            else:
+                results["market_sentiment"] = "neutral"
             
-            # Volatility metrics
-            results["volatility"] = {
-                "vix": market_data.get("vix", 0),
-                "vix_change": market_data.get("vix_change", 0),
-                "vix_change_percent": market_data.get("vix_change_percent", 0)
-            }
+            # Generate key insights
+            results["key_insights"] = [
+                f"Overall market sentiment is {results['market_sentiment']}.",
+                f"{positive_indices} out of {total_indices} major indices are positive today.",
+                f"{positive_sectors} out of {total_sectors} sectors are showing positive performance."
+            ]
+            
+            # Add top performing sector
+            if results["sector_performance"]:
+                top_sector = max(results["sector_performance"].items(), key=lambda x: x[1])
+                results["key_insights"].append(f"The top performing sector is {top_sector[0]} at {top_sector[1]:.2f}%.")
+            
+            # Add worst performing sector
+            if results["sector_performance"]:
+                bottom_sector = min(results["sector_performance"].items(), key=lambda x: x[1])
+                results["key_insights"].append(f"The worst performing sector is {bottom_sector[0]} at {bottom_sector[1]:.2f}%.")
+            
+            # Focus analysis based on query if provided
+            if query:
+                query_lower = query.lower()
+                
+                # Check for region focus
+                if "asia" in query_lower:
+                    results["focus_region"] = "Asia"
+                    # Filter indices for Asian markets
+                    asia_indices = {name: data for name, data in results["indices_performance"].items() 
+                                  if "nikkei" in name.lower() or "hang seng" in name.lower() or "shanghai" in name.lower()}
+                    results["focus_indices"] = asia_indices
+                
+                # Check for sector focus
+                if "tech" in query_lower or "technology" in query_lower:
+                    results["focus_sector"] = "Technology"
+                    # Extract technology sector performance
+                    if "Technology" in results["sector_performance"]:
+                        results["focus_sector_performance"] = results["sector_performance"]["Technology"]
             
             logger.info("Market analysis completed successfully")
-            return {
-                "success": True,
-                "analysis": results,
-                "error": None
-            }
+            return results
             
         except Exception as e:
             logger.error(f"Error analyzing market data: {e}")
             return {
-                "success": False,
-                "analysis": None,
                 "error": f"Error analyzing market data: {str(e)}"
             }
     
-    def analyze_earnings(self, earnings_data):
+    def analyze_earnings(self, earnings_data, query=None):
         """
         Analyze earnings data to extract insights.
         
         Args:
-            earnings_data: Earnings data including reports, estimates, etc.
+            earnings_data: Earnings data including surprises, upcoming reports, etc.
+            query: Optional query string to focus the analysis
             
         Returns:
             Dictionary with earnings analysis results
@@ -224,413 +313,252 @@ class AnalysisAgent:
         try:
             # Extract earnings metrics
             results = {
-                "surprises": [],
-                "upcoming_reports": [],
-                "earnings_trends": {},
-                "sector_performance": {}
+                "total_surprises": 0,
+                "positive_surprises": 0,
+                "negative_surprises": 0,
+                "top_beats": [],
+                "top_misses": [],
+                "sector_performance": {},
+                "key_insights": []
             }
             
             # Process earnings surprises
-            surprises = []
-            for report in earnings_data.get("reports", []):
-                if "reported_eps" in report and "estimated_eps" in report:
-                    reported = report.get("reported_eps", 0)
-                    estimated = report.get("estimated_eps", 0)
-                    
-                    # Calculate surprise percentage
-                    if estimated != 0:
-                        surprise_percent = round(((reported - estimated) / abs(estimated)) * 100, 2)
-                    else:
-                        surprise_percent = 0
-                    
-                    # Add to surprises if significant (more than 2% difference)
-                    if abs(surprise_percent) >= 2:
-                        surprises.append({
-                            "symbol": report.get("symbol", ""),
-                            "company": report.get("company", ""),
-                            "reported_eps": reported,
-                            "estimated_eps": estimated,
-                            "surprise_percent": surprise_percent,
-                            "date": report.get("date", "")
-                        })
+            surprises = earnings_data.get("surprises", [])
+            results["total_surprises"] = len(surprises)
             
-            # Sort surprises by absolute surprise percentage
-            results["surprises"] = sorted(
-                surprises,
-                key=lambda x: abs(x.get("surprise_percent", 0)),
+            # Count positive and negative surprises
+            for surprise in surprises:
+                if surprise.get("surprise_percent", 0) > 0:
+                    results["positive_surprises"] += 1
+                else:
+                    results["negative_surprises"] += 1
+            
+            # Get top beats
+            top_beats = sorted(
+                [s for s in surprises if s.get("surprise_percent", 0) > 0],
+                key=lambda x: x.get("surprise_percent", 0),
                 reverse=True
-            )[:10]  # Top 10 surprises
+            )[:5]  # Top 5 beats
             
-            # Process upcoming earnings reports
-            today = datetime.now()
-            upcoming = []
-            for report in earnings_data.get("calendar", []):
-                report_date_str = report.get("date", "")
-                try:
-                    report_date = datetime.strptime(report_date_str, "%Y-%m-%d")
-                    # Include if it's in the future
-                    if report_date > today:
-                        upcoming.append(report)
-                except:
-                    # If date parsing fails, include it anyway
-                    upcoming.append(report)
+            results["top_beats"] = [
+                {
+                    "symbol": beat.get("symbol", ""),
+                    "name": beat.get("name", ""),
+                    "surprise_percent": beat.get("surprise_percent", 0),
+                    "expected_eps": beat.get("expected_eps", 0),
+                    "actual_eps": beat.get("actual_eps", 0),
+                    "sector": beat.get("sector", "")
+                }
+                for beat in top_beats
+            ]
             
-            # Sort upcoming by date
-            results["upcoming_reports"] = sorted(
-                upcoming,
-                key=lambda x: x.get("date", "")
-            )[:10]  # Next 10 reports
+            # Get top misses
+            top_misses = sorted(
+                [s for s in surprises if s.get("surprise_percent", 0) < 0],
+                key=lambda x: x.get("surprise_percent", 0)
+            )[:5]  # Top 5 misses
             
-            # Calculate earnings trends by sector
-            sector_beats = {}
-            sector_misses = {}
-            sector_inline = {}
+            results["top_misses"] = [
+                {
+                    "symbol": miss.get("symbol", ""),
+                    "name": miss.get("name", ""),
+                    "surprise_percent": miss.get("surprise_percent", 0),
+                    "expected_eps": miss.get("expected_eps", 0),
+                    "actual_eps": miss.get("actual_eps", 0),
+                    "sector": miss.get("sector", "")
+                }
+                for miss in top_misses
+            ]
             
-            for report in earnings_data.get("reports", []):
-                if "reported_eps" in report and "estimated_eps" in report:
-                    sector = report.get("sector", "Unknown")
-                    reported = report.get("reported_eps", 0)
-                    estimated = report.get("estimated_eps", 0)
-                    
-                    # Initialize sector counts if needed
-                    if sector not in sector_beats:
-                        sector_beats[sector] = 0
-                        sector_misses[sector] = 0
-                        sector_inline[sector] = 0
-                    
-                    # Count beats, misses, and inline reports
-                    if reported > estimated * 1.02:  # Beat by 2% or more
-                        sector_beats[sector] += 1
-                    elif reported < estimated * 0.98:  # Missed by 2% or more
-                        sector_misses[sector] += 1
-                    else:  # Within 2% of estimate
-                        sector_inline[sector] += 1
-            
-            # Calculate sector performance
+            # Calculate sector performance in earnings
             sector_performance = {}
-            for sector in sector_beats.keys():
-                total = sector_beats[sector] + sector_misses[sector] + sector_inline[sector]
-                if total > 0:
-                    beat_rate = round((sector_beats[sector] / total) * 100, 2)
-                    miss_rate = round((sector_misses[sector] / total) * 100, 2)
-                    inline_rate = round((sector_inline[sector] / total) * 100, 2)
-                    
+            for surprise in surprises:
+                sector = surprise.get("sector", "Unknown")
+                surprise_pct = surprise.get("surprise_percent", 0)
+                
+                if sector not in sector_performance:
                     sector_performance[sector] = {
-                        "beat_rate": beat_rate,
-                        "miss_rate": miss_rate,
-                        "inline_rate": inline_rate,
-                        "total_reports": total
+                        "count": 0,
+                        "positive": 0,
+                        "negative": 0,
+                        "total_surprise": 0
                     }
+                
+                sector_performance[sector]["count"] += 1
+                if surprise_pct > 0:
+                    sector_performance[sector]["positive"] += 1
+                else:
+                    sector_performance[sector]["negative"] += 1
+                sector_performance[sector]["total_surprise"] += surprise_pct
+            
+            # Calculate average surprise by sector
+            for sector, data in sector_performance.items():
+                if data["count"] > 0:
+                    data["average_surprise"] = round(data["total_surprise"] / data["count"], 2)
+                    data["beat_rate"] = round((data["positive"] / data["count"]) * 100, 2)
             
             results["sector_performance"] = sector_performance
             
+            # Generate key insights
+            if results["total_surprises"] > 0:
+                beat_rate = round((results["positive_surprises"] / results["total_surprises"]) * 100, 2)
+                results["key_insights"].append(f"{beat_rate}% of companies beat earnings expectations.")
+            
+            if top_beats:
+                top_beat = top_beats[0]
+                results["key_insights"].append(
+                    f"{top_beat.get('name', top_beat.get('symbol', ''))} had the largest positive surprise at {top_beat.get('surprise_percent', 0):.2f}%."
+                )
+            
+            if top_misses:
+                top_miss = top_misses[0]
+                results["key_insights"].append(
+                    f"{top_miss.get('name', top_miss.get('symbol', ''))} had the largest negative surprise at {top_miss.get('surprise_percent', 0):.2f}%."
+                )
+            
+            # Focus analysis based on query if provided
+            if query:
+                query_lower = query.lower()
+                
+                # Check for sector focus
+                if "tech" in query_lower or "technology" in query_lower:
+                    results["focus_sector"] = "Technology"
+                    # Filter surprises for Technology sector
+                    tech_surprises = [s for s in surprises if s.get("sector") == "Technology"]
+                    results["focus_surprises"] = tech_surprises
+                    
+                    # Calculate Technology sector metrics
+                    if tech_surprises:
+                        tech_positive = sum(1 for s in tech_surprises if s.get("surprise_percent", 0) > 0)
+                        tech_beat_rate = round((tech_positive / len(tech_surprises)) * 100, 2)
+                        results["focus_beat_rate"] = tech_beat_rate
+                        results["key_insights"].append(f"In the Technology sector, {tech_beat_rate}% of companies beat expectations.")
+                
+                # Check for region focus
+                if "asia" in query_lower:
+                    results["focus_region"] = "Asia"
+                    # Filter surprises for Asian companies
+                    # This would require region data in the earnings surprises, which might not be available
+                    # In a real implementation, you would need to join with company metadata
+            
             logger.info("Earnings analysis completed successfully")
-            return {
-                "success": True,
-                "analysis": results,
-                "error": None
-            }
+            return results
             
         except Exception as e:
             logger.error(f"Error analyzing earnings data: {e}")
             return {
-                "success": False,
-                "analysis": None,
                 "error": f"Error analyzing earnings data: {str(e)}"
             }
     
-    def analyze_news_sentiment(self, news_data):
+    def generate_market_brief(self, query, portfolio_data=None, market_data=None, earnings_data=None):
         """
-        Analyze news data to extract sentiment and key topics.
+        Generate a comprehensive market brief based on available data.
         
         Args:
-            news_data: News articles and related data
+            query: Query string to focus the brief
+            portfolio_data: Optional portfolio data
+            market_data: Optional market data
+            earnings_data: Optional earnings data
             
         Returns:
-            Dictionary with news sentiment analysis results
+            Dictionary with market brief
         """
-        logger.info("Analyzing news sentiment...")
+        logger.info(f"Generating market brief for query: {query}")
         
         try:
-            # Simple keyword-based sentiment analysis
-            # In a real implementation, this would use NLP models
-            positive_keywords = [
-                "growth", "profit", "surge", "rise", "gain", "positive", "up", "rally",
-                "bullish", "outperform", "beat", "exceed", "strong", "boost", "improvement",
-                "record", "high", "success", "opportunity", "optimistic"
-            ]
-            
-            negative_keywords = [
-                "decline", "drop", "fall", "loss", "negative", "down", "bearish",
-                "underperform", "miss", "weak", "cut", "reduce", "concern", "risk",
-                "fear", "caution", "warning", "sell", "pessimistic", "downturn"
-            ]
-            
-            articles = news_data.get("articles", [])
-            
-            # Calculate sentiment for each article
-            sentiment_scores = []
-            for article in articles:
-                title = article.get("title", "").lower()
-                positive_count = sum(1 for keyword in positive_keywords if keyword in title)
-                negative_count = sum(1 for keyword in negative_keywords if keyword in title)
-                
-                # Calculate simple sentiment score
-                total_count = positive_count + negative_count
-                if total_count > 0:
-                    sentiment_score = (positive_count - negative_count) / total_count
-                else:
-                    sentiment_score = 0  # Neutral if no keywords found
-                
-                # Determine sentiment label
-                if sentiment_score > 0.2:
-                    sentiment_label = "positive"
-                elif sentiment_score < -0.2:
-                    sentiment_label = "negative"
-                else:
-                    sentiment_label = "neutral"
-                
-                sentiment_scores.append({
-                    "title": article.get("title", ""),
-                    "source": article.get("source", ""),
-                    "score": sentiment_score,
-                    "label": sentiment_label
-                })
-            
-            # Calculate overall sentiment
-            if sentiment_scores:
-                overall_score = sum(item["score"] for item in sentiment_scores) / len(sentiment_scores)
-                if overall_score > 0.1:
-                    overall_label = "positive"
-                elif overall_score < -0.1:
-                    overall_label = "negative"
-                else:
-                    overall_label = "neutral"
-            else:
-                overall_score = 0
-                overall_label = "neutral"
-            
-            # Extract key topics from news titles
-            topics = {}
-            for article in articles:
-                title = article.get("title", "")
-                words = title.split()
-                for word in words:
-                    word = word.lower().strip(".,!?():;\"'")
-                    if len(word) > 3 and word not in ["that", "this", "with", "from", "what", "will", "have"]:
-                        topics[word] = topics.get(word, 0) + 1
-            
-            # Get top topics
-            top_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[:10]
-            
+            # Initialize results
             results = {
-                "overall_score": round(overall_score, 2),
-                "overall_label": overall_label,
-                "article_sentiment": sentiment_scores,
-                "top_topics": [{"topic": topic, "count": count} for topic, count in top_topics]
+                "summary": "",
+                "portfolio_insights": [],
+                "market_insights": [],
+                "earnings_insights": [],
+                "recommendations": []
             }
             
-            logger.info("News sentiment analysis completed successfully")
-            return {
-                "success": True,
-                "analysis": results,
-                "error": None
-            }
-            
-        except Exception as e:
-            logger.error(f"Error analyzing news sentiment: {e}")
-            return {
-                "success": False,
-                "analysis": None,
-                "error": f"Error analyzing news sentiment: {str(e)}"
-            }
-    
-    def generate_market_brief(self, query, portfolio_data, market_data, earnings_data, news_data):
-        """
-        Generate a market brief based on the given data.
-        
-        Args:
-            query: User query
-            portfolio_data: Portfolio data
-            market_data: Market data
-            earnings_data: Earnings data
-            news_data: News data
-            
-        Returns:
-            Dictionary with brief
-        """
-        try:
-            # Extract relevant data
-            indices = market_data.get("analysis", {}).get("indices_performance", {})
-            sectors = market_data.get("analysis", {}).get("sector_performance", {})
-            earnings = earnings_data.get("analysis", {}).get("surprises", [])
-            news_sentiment = news_data.get("analysis", {}).get("overall_label", "neutral")
-            
-            # Generate a brief summary
-            brief = "Today's market summary: "
-            
-            # Add indices performance
-            if indices:
-                brief += "Major indices are "
-                positive_count = sum(1 for idx in indices.values() if idx.get("change_percent", 0) > 0)
-                negative_count = sum(1 for idx in indices.values() if idx.get("change_percent", 0) < 0)
+            # Analyze portfolio data if available
+            if portfolio_data:
+                portfolio_analysis = self.analyze_portfolio(portfolio_data, query)
                 
-                if positive_count > negative_count:
-                    brief += "mostly positive. "
-                elif negative_count > positive_count:
-                    brief += "mostly negative. "
-                else:
-                    brief += "mixed. "
-                
-                # Add specific indices
-                for name, data in indices.items():
-                    if "S&P 500" in name or "Dow" in name or "Nasdaq" in name:
-                        change = data.get("change_percent", 0)
-                        brief += f"{name} is {change:.2f}%. "
-            
-            # Add sector performance
-            if sectors:
-                # Find best and worst sectors
-                sector_items = list(sectors.items())
-                if sector_items:
-                    sector_items.sort(key=lambda x: x[1].get("change_percent", 0), reverse=True)
-                    best_sector = sector_items[0]
-                    worst_sector = sector_items[-1]
+                # Extract portfolio insights
+                if "focus_combined" in portfolio_analysis and portfolio_analysis["focus_combined"] == "Asia Technology":
+                    asia_tech_pct = portfolio_analysis.get("focus_percentage", 0)
+                    results["portfolio_insights"].append(f"Your Asia tech allocation is {asia_tech_pct:.1f}% of total portfolio.")
                     
-                    brief += f"{best_sector[0]} is the best performing sector at {best_sector[1].get('change_percent', 0):.2f}%, "
-                    brief += f"while {worst_sector[0]} is lagging at {worst_sector[1].get('change_percent', 0):.2f}%. "
-            
-            # Add earnings surprises
-            if earnings:
-                positive_surprises = [e for e in earnings if e.get("surprise_percent", 0) > 2]
-                negative_surprises = [e for e in earnings if e.get("surprise_percent", 0) < -2]
+                    # Compare to previous if available
+                    if "previous" in portfolio_data and "asia_tech_percentage" in portfolio_data["previous"]:
+                        prev_pct = portfolio_data["previous"]["asia_tech_percentage"]
+                        change = asia_tech_pct - prev_pct
+                        results["portfolio_insights"].append(f"This is {'up' if change > 0 else 'down'} from {prev_pct:.1f}% yesterday, a change of {abs(change):.1f} percentage points.")
                 
-                if positive_surprises:
-                    top_surprise = max(positive_surprises, key=lambda x: x.get("surprise_percent", 0))
-                    brief += f"{top_surprise.get('company', 'A company')} reported earnings {top_surprise.get('surprise_percent', 0):.1f}% above estimates. "
+                # Add top holdings in focus area
+                if "focus_holdings" in portfolio_analysis and portfolio_analysis["focus_holdings"]:
+                    top_holdings = portfolio_analysis["focus_holdings"][:3]  # Top 3
+                    holdings_text = ", ".join([f"{h.get('name', h.get('symbol', ''))} ({h.get('weight', 0):.1f}%)" for h in top_holdings])
+                    results["portfolio_insights"].append(f"Top holdings in this segment: {holdings_text}.")
+            
+            # Analyze market data if available
+            if market_data:
+                market_analysis = self.analyze_market(market_data, query)
                 
-                if negative_surprises:
-                    worst_surprise = min(negative_surprises, key=lambda x: x.get("surprise_percent", 0))
-                    brief += f"{worst_surprise.get('company', 'A company')} missed expectations by {abs(worst_surprise.get('surprise_percent', 0)):.1f}%. "
+                # Extract market insights
+                if "market_sentiment" in market_analysis:
+                    results["market_insights"].append(f"Overall market sentiment is {market_analysis['market_sentiment']}.")
+                
+                # Add focused insights
+                if "focus_region" in market_analysis and market_analysis["focus_region"] == "Asia":
+                    if "focus_indices" in market_analysis:
+                        for name, data in market_analysis["focus_indices"].items():
+                            results["market_insights"].append(f"{name} is {data.get('change_percent', 0):.2f}% today.")
             
-            # Add news sentiment
-            brief += f"Overall market sentiment is {news_sentiment} based on recent news. "
+            # Analyze earnings data if available
+            if earnings_data:
+                earnings_analysis = self.analyze_earnings(earnings_data, query)
+                
+                # Extract earnings insights
+                if "focus_sector" in earnings_analysis and earnings_analysis["focus_sector"] == "Technology":
+                    if "focus_beat_rate" in earnings_analysis:
+                        results["earnings_insights"].append(f"In the Technology sector, {earnings_analysis['focus_beat_rate']}% of companies beat expectations.")
+                    
+                    # Add specific company surprises
+                    if "focus_surprises" in earnings_analysis:
+                        for surprise in earnings_analysis["focus_surprises"][:3]:  # Top 3
+                            company = surprise.get("name", surprise.get("symbol", ""))
+                            pct = surprise.get("surprise_percent", 0)
+                            if pct > 0:
+                                results["earnings_insights"].append(f"{company} beat estimates by {pct:.1f}%.")
+                            else:
+                                results["earnings_insights"].append(f"{company} missed estimates by {abs(pct):.1f}%.")
             
-            return {
-                "success": True,
-                "brief": brief,
-                "error": None
-            }
-        
+            # Generate overall summary
+            summary_parts = []
+            
+            if portfolio_data and "focus_percentage" in portfolio_analysis:
+                summary_parts.append(f"Your Asia tech allocation is {portfolio_analysis.get('focus_percentage', 0):.1f}% of AUM")
+            
+            if earnings_data and "focus_surprises" in earnings_analysis:
+                beats = [s for s in earnings_analysis["focus_surprises"] if s.get("surprise_percent", 0) > 0]
+                misses = [s for s in earnings_analysis["focus_surprises"] if s.get("surprise_percent", 0) < 0]
+                
+                if beats:
+                    top_beat = beats[0]
+                    summary_parts.append(f"{top_beat.get('name', top_beat.get('symbol', ''))} beat estimates by {top_beat.get('surprise_percent', 0):.1f}%")
+                
+                if misses:
+                    top_miss = misses[0]
+                    summary_parts.append(f"{top_miss.get('name', top_miss.get('symbol', ''))} missed by {abs(top_miss.get('surprise_percent', 0)):.1f}%")
+            
+            if market_data and "market_sentiment" in market_analysis:
+                summary_parts.append(f"Regional sentiment is {market_analysis['market_sentiment']}")
+            
+            results["summary"] = ". ".join(summary_parts) + "."
+            
+            logger.info("Market brief generated successfully")
+            return results
+            
         except Exception as e:
             logger.error(f"Error generating market brief: {e}")
             return {
-                "success": False,
-                "brief": None,
-                "error": str(e)
-            }
-    
-    def generate_sector_report(self, query, portfolio_data, earnings_data, news_data):
-        """
-        Generate a sector report based on the given data.
-        
-        Args:
-            query: User query
-            portfolio_data: Portfolio data
-            earnings_data: Earnings data
-            news_data: News data
-            
-        Returns:
-            Dictionary with report
-        """
-        try:
-            # Extract relevant data
-            holdings = portfolio_data.get("analysis", {}).get("holdings", [])
-            region_allocation = portfolio_data.get("analysis", {}).get("region_allocation", {})
-            sector_allocation = portfolio_data.get("analysis", {}).get("sector_allocation", {})
-            previous = portfolio_data.get("analysis", {}).get("previous", {})
-            surprises = earnings_data.get("analysis", {}).get("surprises", [])
-            news_sentiment = news_data.get("analysis", {}).get("overall_label", "neutral")
-            
-            # Generate a report
-            report = ""
-            
-            # Check if this is an Asia tech query
-            if "asia" in query.lower() and "tech" in query.lower():
-                # Get Asia tech allocation
-                asia_tech_allocation = 0
-                previous_allocation = 0
-                
-                for region, allocation in region_allocation.items():
-                    if "asia" in region.lower():
-                        for sector, sector_alloc in sector_allocation.items():
-                            if "tech" in sector.lower():
-                                asia_tech_allocation = sector_alloc
-                
-                # Get previous allocation from the data or use a default
-                if previous and "asia_tech" in previous:
-                    previous_allocation = previous.get("asia_tech", 0)
-                else:
-                    # Use a slightly different number to show change
-                    previous_allocation = asia_tech_allocation - 4.0 if asia_tech_allocation > 5 else asia_tech_allocation + 4.0
-                
-                # Format the report
-                report += f"Today, your Asia tech allocation is {asia_tech_allocation:.1f}% of AUM, "
-                
-                if asia_tech_allocation > previous_allocation:
-                    report += f"up from {previous_allocation:.1f}% yesterday. "
-                else:
-                    report += f"down from {previous_allocation:.1f}% yesterday. "
-                
-                # Add earnings surprises
-                positive_surprises = []
-                negative_surprises = []
-                
-                for surprise in surprises:
-                    company = surprise.get("company", "")
-                    if company in ["TSMC", "Taiwan Semiconductor", "TSM", "Samsung", "Alibaba", "9988.HK", "BABA"]:
-                        if surprise.get("surprise_percent", 0) > 0:
-                            positive_surprises.append(surprise)
-                        else:
-                            negative_surprises.append(surprise)
-                
-                if positive_surprises:
-                    top_surprise = max(positive_surprises, key=lambda x: x.get("surprise_percent", 0))
-                    report += f"{top_surprise.get('company', 'TSMC')} beat estimates by {top_surprise.get('surprise_percent', 4):.1f}%, "
-                else:
-                    report += "TSMC beat estimates by 4%, "
-                
-                if negative_surprises:
-                    worst_surprise = min(negative_surprises, key=lambda x: x.get("surprise_percent", 0))
-                    report += f"{worst_surprise.get('company', 'Samsung')} missed by {abs(worst_surprise.get('surprise_percent', 2)):.1f}%. "
-                else:
-                    report += "Samsung missed by 2%. "
-                
-                # Add sentiment
-                report += f"Regional sentiment is {news_sentiment} "
-                
-                if news_sentiment == "neutral":
-                    report += "with a cautionary tilt due to rising yields. "
-                elif news_sentiment == "positive":
-                    report += "with optimism around new product launches and strong demand. "
-                else:
-                    report += "with concerns about supply chain disruptions and regulatory challenges. "
-                
-                # Add additional insight
-                report += "The sector faces regulatory headwinds in China but strong demand in other markets."
-            
-            return {
-                "success": True,
-                "report": report,
-                "error": None
-            }
-            
-        except Exception as e:
-            logger.error(f"Error generating sector report: {e}")
-            return {
-                "success": False,
-                "report": None,
-                "error": str(e)
+                "error": f"Error generating market brief: {str(e)}"
             }
 
 # Example usage
