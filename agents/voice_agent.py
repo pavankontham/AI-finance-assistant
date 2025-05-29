@@ -1,16 +1,14 @@
 """
-Voice agent for speech-to-text and text-to-speech conversion.
+Voice Agent Module
+Handles speech-to-text and text-to-speech functionality with improved accuracy.
 """
-import os
 import logging
-from typing import Dict, List, Any, Optional
-import base64
+import os
 from io import BytesIO
+
 import gtts
-import tempfile
-import wave
-import numpy as np
-import json
+from pydub import AudioSegment
+import speech_recognition as sr
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,128 +16,105 @@ logger = logging.getLogger(__name__)
 
 class VoiceAgent:
     """
-    Agent for handling voice interactions, including speech-to-text and text-to-speech.
+    A voice agent that handles speech-to-text and text-to-speech functionality.
+    Provides improved accuracy for audio processing.
     """
     
     def __init__(self):
-        """Initialize the voice agent."""
-        self.logger = logging.getLogger(__name__)
-    
-    def speech_to_text(self, audio_bytes):
+        """Initialize the VoiceAgent."""
+        self.recognizer = sr.Recognizer()
+        # Adjust recognition parameters for better accuracy
+        self.recognizer.energy_threshold = 300
+        self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.dynamic_energy_adjustment_damping = 0.15
+        self.recognizer.dynamic_energy_ratio = 1.5
+        self.recognizer.pause_threshold = 0.8
+        self.recognizer.operation_timeout = 10  # seconds
+        
+    def speech_to_text(self, audio_file):
         """
-        Convert speech audio to text.
+        Convert speech from an audio file to text.
         
         Args:
-            audio_bytes: Audio data bytes
+            audio_file: The audio file to process (bytes or file path)
             
         Returns:
-            Transcribed text
+            str: The transcribed text or None if an error occurred
         """
-        self.logger.info("Converting speech to text")
-        
         try:
-            # In a real implementation, this would use a speech recognition service
-            # For this demo, we'll return a simulated response
-            
-            # Log the audio length to help with debugging
-            self.logger.info(f"Received audio data of size: {len(audio_bytes)} bytes")
-            
-            # Simulate speech recognition with a default response
-            # In a real implementation, you would use a service like Google Speech-to-Text,
-            # Azure Speech Services, or a local model like Whisper
-            
-            # For demo purposes, return a simulated query
-            return "What's our risk exposure in Asia tech stocks today?"
-            
+            # Handle different input types
+            if isinstance(audio_file, bytes):
+                # Convert bytes to an AudioData object
+                with BytesIO(audio_file) as audio_io:
+                    # Convert to wav format for better compatibility
+                    audio = AudioSegment.from_file(audio_io)
+                    wav_io = BytesIO()
+                    audio.export(wav_io, format="wav")
+                    wav_io.seek(0)
+                    with sr.AudioFile(wav_io) as source:
+                        audio_data = self.recognizer.record(source)
+            elif isinstance(audio_file, str) and os.path.exists(audio_file):
+                # Load from file path
+                with sr.AudioFile(audio_file) as source:
+                    audio_data = self.recognizer.record(source)
+            else:
+                logger.error("Invalid audio file format")
+                return None
+                
+            # Try multiple recognition services for better accuracy
+            try:
+                # Try Google's speech recognition first (requires internet)
+                text = self.recognizer.recognize_google(audio_data)
+                logger.info("Successfully transcribed audio using Google Speech Recognition")
+                return text
+            except sr.RequestError:
+                # Fall back to Sphinx (offline, less accurate but works without internet)
+                try:
+                    text = self.recognizer.recognize_sphinx(audio_data)
+                    logger.info("Successfully transcribed audio using Sphinx (offline)")
+                    return text
+                except Exception as e:
+                    logger.error(f"Sphinx recognition error: {e}")
+                    return None
+            except Exception as e:
+                logger.error(f"Speech recognition error: {e}")
+                return None
+                
         except Exception as e:
-            self.logger.error(f"Error converting speech to text: {e}")
+            logger.error(f"Error processing audio file: {e}")
             return None
     
-    def text_to_speech(self, text):
+    def text_to_speech(self, text, lang="en", slow=False):
         """
-        Convert text to speech audio.
+        Convert text to speech.
         
         Args:
-            text: Text to convert to speech
+            text (str): The text to convert to speech
+            lang (str): The language code (default: "en")
+            slow (bool): Whether to speak slowly (default: False)
             
         Returns:
-            Audio data bytes
+            bytes: The audio bytes or None if an error occurred
         """
-        self.logger.info("Converting text to speech")
-        
         try:
-            # Use gTTS (Google Text-to-Speech) for text-to-speech conversion
-            tts = gtts.gTTS(text=text, lang="en")
-            
-            # Save to a BytesIO object
+            tts = gtts.gTTS(text=text, lang=lang, slow=slow)
             audio_bytes_io = BytesIO()
             tts.write_to_fp(audio_bytes_io)
             audio_bytes_io.seek(0)
-            
-            # Return the audio bytes
             return audio_bytes_io.read()
-            
         except Exception as e:
-            self.logger.error(f"Error converting text to speech: {e}")
+            logger.error(f"Error in text-to-speech conversion: {e}")
             return None
+
+# Example usage
+if __name__ == "__main__":
+    voice_agent = VoiceAgent()
     
-    def process_voice_query(self, audio_bytes):
-        """
-        Process a voice query end-to-end.
-        
-        Args:
-            audio_bytes: Audio data bytes
-            
-        Returns:
-            Dictionary with query text and response
-        """
-        self.logger.info("Processing voice query")
-        
-        try:
-            # Convert speech to text
-            query_text = self.speech_to_text(audio_bytes)
-            
-            if not query_text:
-                return {
-                    "success": False,
-                    "query": None,
-                    "response": "Sorry, I couldn't understand what you said. Please try again.",
-                    "audio": None
-                }
-            
-            # In a real implementation, you would process the query through other agents
-            # For this demo, return a simulated response
-            response_text = "Based on your portfolio analysis, your Asia tech allocation is 22% of your total portfolio value. This is up from 18% yesterday. Your top holdings in this segment include Taiwan Semiconductor (7.5%), Alibaba Group (5.2%), and Samsung Electronics (4.8%)."
-            
-            # Convert response to speech
-            response_audio = self.text_to_speech(response_text)
-            
-            return {
-                "success": True,
-                "query": query_text,
-                "response": response_text,
-                "audio": response_audio
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error processing voice query: {e}")
-            return {
-                "success": False,
-                "query": None,
-                "response": f"An error occurred: {str(e)}",
-                "audio": None
-            }
+    # Example text-to-speech
+    audio_bytes = voice_agent.text_to_speech("Hello, I'm your finance assistant. How can I help you today?")
     
-    def get_voice_settings(self):
-        """
-        Get voice settings.
-        
-        Returns:
-            Dictionary with voice settings
-        """
-        return {
-            "language": "en",
-            "voice": "en-US-Standard-B",
-            "speed": 1.0,
-            "pitch": 0.0
-        }
+    # Save to file for testing
+    if audio_bytes:
+        with open("test_output.mp3", "wb") as f:
+            f.write(audio_bytes)
+        print("Audio saved to test_output.mp3")
