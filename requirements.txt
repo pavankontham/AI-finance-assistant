@@ -2,21 +2,21 @@
 fastapi>=0.115.0
 uvicorn>=0.30.0
 pydantic>=2.10.0
-python-dotenv>=1.0.0
-requests>=2.31.0
+python-dotenv>=0.21.0
+requests>=2.28.2
 
 # Web Interface
-streamlit>=1.39.0
+streamlit>=1.22.0
 
 # NLP and Machine Learning
 transformers>=4.36.0
 torch>=2.0.0
-numpy>=1.24.0
-pandas>=2.0.0
+numpy>=1.24.3
+pandas>=1.5.3
 
 # Audio Processing
 soundfile>=0.12.1
-gtts>=2.5.0
+gtts>=2.3.1
 pydub>=0.25.1
 librosa>=0.10.1
 webrtcvad>=2.0.10
