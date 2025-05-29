@@ -6,8 +6,7 @@ import logging
 from typing import Dict, List, Any, Optional
 import json
 from datetime import datetime
-from langgraph.graph import StateGraph, END
-from crewai import Agent, Task, Crew, Process
+
 from agents.api_agent import APIAgent
 from agents.scraping_agent import ScrapingAgent
 from agents.retriever_agent import RetrieverAgent
@@ -72,7 +71,7 @@ class AgentOrchestrator:
             elif "market" in query_type or "overview" in query_type:
                 return self._process_market_query(query)
             else:
-                # For general queries, use LangGraph to orchestrate the flow
+                # For general queries, use a simple response
                 return self._process_general_query(query)
         
         except Exception as e:
@@ -203,7 +202,7 @@ class AgentOrchestrator:
     
     def _process_general_query(self, query: str) -> str:
         """
-        Process a general query using CrewAI.
+        Process a general query with a simple response.
         
         Args:
             query: User's query text
@@ -211,55 +210,7 @@ class AgentOrchestrator:
         Returns:
             Response text
         """
-        self.logger.info("Processing general query using CrewAI")
+        self.logger.info("Processing general query")
         
-        # Define agents
-        researcher = Agent(
-            role="Financial Data Researcher",
-            goal="Find the most accurate and up-to-date financial information",
-            backstory="You are an expert at gathering financial data from various sources.",
-            verbose=True
-        )
-        
-        analyst = Agent(
-            role="Financial Analyst",
-            goal="Analyze financial data to extract meaningful insights",
-            backstory="You are a seasoned financial analyst with years of experience.",
-            verbose=True
-        )
-        
-        writer = Agent(
-            role="Financial Content Writer",
-            goal="Create clear, concise, and informative financial reports",
-            backstory="You specialize in translating complex financial data into easy-to-understand language.",
-            verbose=True
-        )
-        
-        # Define tasks
-        research_task = Task(
-            description=f"Research the following financial query: {query}",
-            agent=researcher
-        )
-        
-        analysis_task = Task(
-            description="Analyze the research findings and extract key insights",
-            agent=analyst
-        )
-        
-        writing_task = Task(
-            description="Write a clear and concise response to the original query",
-            agent=writer
-        )
-        
-        # Create the crew
-        crew = Crew(
-            agents=[researcher, analyst, writer],
-            tasks=[research_task, analysis_task, writing_task],
-            verbose=True,
-            process=Process.sequential
-        )
-        
-        # Execute the crew's tasks
-        result = crew.kickoff()
-        
-        return result 
+        # For demonstration purposes, return a simple response
+        return f"I understand you're asking about: {query}\n\nTo get specific financial information, try asking about market overview, portfolio exposure (especially in regions like Asia or sectors like Technology), or recent earnings surprises."
