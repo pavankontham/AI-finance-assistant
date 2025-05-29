@@ -20,15 +20,17 @@ class APIAgent(BaseAgent):
     Agent for fetching market data from financial APIs.
     """
     
-    def __init__(self, agent_id: str = "api_agent", agent_name: str = "API Agent"):
+    def __init__(self, market_data_client=None, agent_id: str = "api_agent", agent_name: str = "API Agent"):
         """
         Initialize the API agent.
         
         Args:
+            market_data_client: Optional market data client
             agent_id: Unique identifier for the agent
             agent_name: Human-readable name for the agent
         """
         super().__init__(agent_id, agent_name)
+        self.market_data_client = market_data_client
         self.market_data_api = MarketDataAPI()
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -199,200 +201,93 @@ class APIAgent(BaseAgent):
                 # Get real-time market data
                 real_time_data = web_scraper.get_realtime_market_data(symbols)
                 
-                # Format the data for the response
-                formatted_data = {}
-                for symbol, data in real_time_data.items():
-                    formatted_data[symbol] = {
-                        "symbol": symbol,
-                        "name": data.get("name", ""),
-                        "price": data.get("price", 0.0),
-                        "change": data.get("change", 0.0),
-                        "change_percent": data.get("change_percent", 0.0),
-                        "volume": data.get("volume", 0),
-                        "market_cap": data.get("market_cap", ""),
-                        "pe_ratio": data.get("pe_ratio", None),
-                        "source": data.get("source", "Real-time Data"),
-                        "timestamp": data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                    }
-                
                 return {
-                    "success": True,
-                    "data": {
-                        "stocks": formatted_data,
-                        "query": query,
-                        "data_source": "Real-time market data"
-                    }
+                    "market_data": real_time_data,
+                    "symbols": symbols,
+                    "timestamp": datetime.now().isoformat()
                 }
-            
-            # If no specific symbols found, get general market data
-            # First try to get real-time data for major indices
-            from data_ingestion.web_scraper import WebScraper
-            web_scraper = WebScraper()
-            
-            # Get real-time data for major indices
-            indices = ["^DJI", "^GSPC", "^IXIC", "^N225", "^HSI", "^FTSE"]
-            indices_data = web_scraper.get_realtime_market_data(indices)
-            
-            # Get sector performance from Alpha Vantage
-            sector_performance = self.market_data_api.get_sector_performance()
-            
-            # Format the response
-            market_summary = {
-                "indices": {},
-                "sectors": sector_performance,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "data_source": "Real-time market data"
-            }
-            
-            # Add indices data
-            for symbol, data in indices_data.items():
-                index_name = {
-                    "^DJI": "Dow Jones Industrial Average",
-                    "^GSPC": "S&P 500",
-                    "^IXIC": "NASDAQ Composite",
-                    "^N225": "Nikkei 225",
-                    "^HSI": "Hang Seng Index",
-                    "^FTSE": "FTSE 100"
-                }.get(symbol, data.get("name", symbol))
+            else:
+                # Return a market summary if no specific symbols were mentioned
+                return self.get_market_summary()
                 
-                market_summary["indices"][symbol] = {
-                    "name": index_name,
-                    "price": data.get("price", 0.0),
-                    "change": data.get("change", 0.0),
-                    "change_percent": data.get("change_percent", 0.0),
-                    "source": data.get("source", "Real-time Data")
-                }
-            
-            # Filter based on query if provided
-            if query:
-                # Check for region mentions
-                regions = {
-                    "asia": ["^N225", "^HSI"],  # Nikkei, Hang Seng
-                    "europe": ["^FTSE", "^GDAXI"],  # FTSE, DAX
-                    "us": ["^DJI", "^GSPC", "^IXIC"]  # Dow, S&P, NASDAQ
-                }
-                
-                for region, indices_list in regions.items():
-                    if region in query_lower:
-                        # Filter indices to only include those from this region
-                        filtered_indices = {symbol: data for symbol, data in market_summary["indices"].items() if symbol in indices_list}
-                        market_summary["indices"] = filtered_indices
-                        break
-                
-                # Check for sector mentions
-                sectors = ["technology", "healthcare", "financials", "energy", "consumer", "utilities", "materials", "industrials", "real estate", "communication"]
-                
-                for sector in sectors:
-                    if sector in query_lower:
-                        # Filter sectors to only include the mentioned sector
-                        if sector in market_summary["sectors"]:
-                            market_summary["sectors"] = {sector: market_summary["sectors"][sector]}
-                        break
-            
-            return {
-                "success": True,
-                "data": market_summary
-            }
-            
         except Exception as e:
             logger.error(f"Error getting market data: {e}")
-            
-            # Return a fallback response on error
-            return {
-                "success": False,
-                "error": str(e),
-                "data": {
-                    "message": "Unable to retrieve real-time market data. Please try again later."
-                }
-            }
+            return {"error": str(e)}
     
-    def get_portfolio_data(self, region: str = None, sector: str = None) -> Dict[str, Any]:
+    def get_portfolio_exposure(self, region: Optional[str] = None, sector: Optional[str] = None) -> Dict[str, Any]:
         """
-        Get portfolio data with optional filtering by region or sector.
+        Get portfolio exposure by region and sector.
         
         Args:
-            region: Optional region filter
-            sector: Optional sector filter
+            region: Optional region to filter by
+            sector: Optional sector to filter by
             
         Returns:
-            Dictionary with portfolio data
+            Dictionary with portfolio exposure information
         """
         try:
-            logger.info(f"Getting portfolio data for region: {region}, sector: {sector}")
+            logger.info(f"Getting portfolio exposure for region={region}, sector={sector}")
             
-            # Get portfolio exposure data
-            exposure_data = self.market_data_api.get_portfolio_exposure(region, sector)
+            # If market_data_client is available, use it
+            if self.market_data_client:
+                return self.market_data_client.get_portfolio_exposure(region, sector)
             
-            # Get performance data for portfolio holdings
-            holdings = exposure_data.get("portfolio", [])
-            for holding in holdings:
-                symbol = holding.get("symbol")
-                if symbol:
-                    try:
-                        stock_data = self.market_data_api.get_stock_data(symbol)
-                        if stock_data and "quote" in stock_data:
-                            holding["price"] = stock_data["quote"].get("price", 0.0)
-                            holding["change"] = stock_data["quote"].get("change", 0.0)
-                            holding["change_percent"] = stock_data["quote"].get("change_percent", 0.0)
-                    except Exception as e:
-                        logger.warning(f"Could not get data for {symbol}: {e}")
-            
-            return {
-                "success": True,
-                "analysis": {
-                    "region_allocation": exposure_data.get("region_allocation", {}),
-                    "sector_allocation": exposure_data.get("sector_allocation", {}),
-                    "holdings": holdings,
-                    "previous": exposure_data.get("previous", {})
-                }
-            }
+            # Otherwise use the API directly
+            return self.market_data_api.get_portfolio_exposure(region, sector)
                 
         except Exception as e:
-            logger.error(f"Error getting portfolio data: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "analysis": {}
-            }
+            logger.error(f"Error getting portfolio exposure: {e}")
+            return {"error": str(e)}
     
     def get_market_summary(self) -> Dict[str, Any]:
         """
-        Get a comprehensive market summary.
+        Get a summary of current market conditions.
         
         Returns:
-            Dictionary with market summary
+            Dictionary with market summary information
         """
         try:
             logger.info("Getting market summary")
             
-            # Get market summary data
-            summary_data = self.market_data_api.get_market_summary()
+            # If market_data_client is available, use it
+            if self.market_data_client:
+                return self.market_data_client.get_market_summary()
             
-            # Get sector performance
-            sector_performance = self.market_data_api.get_sector_performance()
-            
-            return {
-                "success": True,
-                "analysis": {
-                    "indices_performance": summary_data.get("indices", {}),
-                    "sector_performance": sector_performance,
-                    "currencies": summary_data.get("currencies", {}),
-                    "commodities": summary_data.get("commodities", {}),
-                    "summary": summary_data.get("summary", "Market data unavailable.")
-                }
-            }
+            # Otherwise use the API directly
+            return self.market_data_api.get_market_summary()
                 
         except Exception as e:
             logger.error(f"Error getting market summary: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "analysis": {}
-            }
+            return {"error": str(e)}
+    
+    def get_earnings_surprises(self, days: int = 30, sector: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get recent earnings surprises.
+        
+        Args:
+            days: Number of days to look back
+            sector: Optional sector to filter by
+            
+        Returns:
+            Dictionary with earnings surprises
+        """
+        try:
+            logger.info(f"Getting earnings surprises for days={days}, sector={sector}")
+            
+            # If market_data_client is available, use it
+            if self.market_data_client:
+                return self.market_data_client.get_earnings_surprises(days, sector)
+            
+            # Otherwise use the API directly
+            return self.market_data_api.get_earnings_surprises(days, sector)
+                
+        except Exception as e:
+            logger.error(f"Error getting earnings surprises: {e}")
+            return {"error": str(e)}
     
     def get_earnings_data(self) -> Dict[str, Any]:
         """
-        Get recent earnings data.
+        Get earnings data.
         
         Returns:
             Dictionary with earnings data
@@ -400,75 +295,20 @@ class APIAgent(BaseAgent):
         try:
             logger.info("Getting earnings data")
             
-            # Get earnings surprises for the past 30 days
-            earnings_data = self.market_data_api.get_earnings_surprises(30)
+            # If market_data_client is available, use it
+            if self.market_data_client:
+                return self.market_data_client.get_earnings_calendar()
             
-            # Get upcoming earnings calendar
-            calendar_data = self.market_data_api.get_earnings_calendar()
-            
-            return {
-                "success": True,
-                "analysis": {
-                    "surprises": earnings_data.get("surprises", []),
-                    "upcoming": calendar_data.get("earnings", [])
-                }
-            }
+            # Otherwise use the API directly
+            return self.market_data_api.get_earnings_calendar()
                 
         except Exception as e:
             logger.error(f"Error getting earnings data: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "analysis": {}
-            }
-    
-    def get_earnings_surprises(self, region: str = None, sector: str = None) -> Dict[str, Any]:
-        """
-        Get earnings surprises with optional filtering by region or sector.
-        
-        Args:
-            region: Optional region filter
-            sector: Optional sector filter
-            
-        Returns:
-            Dictionary with earnings surprises
-        """
-        try:
-            logger.info(f"Getting earnings surprises for region: {region}, sector: {sector}")
-            
-            # Get earnings surprises for the past 30 days
-            earnings_data = self.market_data_api.get_earnings_surprises(30)
-            surprises = earnings_data.get("surprises", [])
-            
-            # Filter by region and sector if provided
-            if region or sector:
-                filtered_surprises = []
-                for surprise in surprises:
-                    if region and surprise.get("region") != region:
-                        continue
-                    if sector and surprise.get("sector") != sector:
-                        continue
-                    filtered_surprises.append(surprise)
-                surprises = filtered_surprises
-            
-            return {
-                "success": True,
-                "analysis": {
-                    "surprises": surprises
-                }
-            }
-                
-        except Exception as e:
-            logger.error(f"Error getting earnings surprises: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "analysis": {}
-            }
+            return {"error": str(e)}
     
     async def get_portfolio_analysis(self, region: Optional[str] = None, sector: Optional[str] = None) -> Dict[str, Any]:
         """
-        Get portfolio analysis for specific region or sector.
+        Get portfolio analysis.
         
         Args:
             region: Optional region to filter by
@@ -478,27 +318,51 @@ class APIAgent(BaseAgent):
             Dictionary with portfolio analysis
         """
         try:
-            # Get portfolio exposure
-            exposure_data = self.market_data_api.get_portfolio_exposure(region, sector)
+            logger.info(f"Getting portfolio analysis for region={region}, sector={sector}")
             
-            # Get earnings surprises for the portfolio
-            portfolio_symbols = [item["symbol"] for item in exposure_data.get("portfolio", [])]
+            # Get portfolio data
+            portfolio_data = self.get_portfolio_exposure(region, sector)
             
-            # Get earnings surprises for relevant sector
-            earnings_data = self.market_data_api.get_earnings_surprises(30, sector)
+            # Extract portfolio holdings
+            holdings = portfolio_data.get("portfolio", [])
             
-            # Get market summary
-            market_data = self.market_data_api.get_market_summary()
+            # Calculate total value
+            total_value = sum(holding.get("value", 0) for holding in holdings)
             
-            # Combine the data
-            result = {
-                "exposure": exposure_data,
-                "earnings": earnings_data,
-                "market": market_data,
+            # Calculate allocation by region and sector
+            region_allocation = {}
+            sector_allocation = {}
+            
+            for holding in holdings:
+                r = holding.get("region", "Unknown")
+                s = holding.get("sector", "Unknown")
+                value = holding.get("value", 0)
+                
+                if r in region_allocation:
+                    region_allocation[r] += value
+                else:
+                    region_allocation[r] = value
+                    
+                if s in sector_allocation:
+                    sector_allocation[s] += value
+                else:
+                    sector_allocation[s] = value
+            
+            # Convert to percentages
+            region_pct = {r: (v / total_value * 100) for r, v in region_allocation.items()}
+            sector_pct = {s: (v / total_value * 100) for s, v in sector_allocation.items()}
+            
+            # Get top holdings
+            top_holdings = sorted(holdings, key=lambda h: h.get("value", 0), reverse=True)[:5]
+            
+            return {
+                "total_value": total_value,
+                "num_holdings": len(holdings),
+                "region_allocation": region_pct,
+                "sector_allocation": sector_pct,
+                "top_holdings": top_holdings,
                 "timestamp": datetime.now().isoformat()
             }
-            
-            return result
                 
         except Exception as e:
             logger.error(f"Error getting portfolio analysis: {e}")
