@@ -10,7 +10,8 @@ import pandas as pd
 import numpy as np
 import datetime
 import time
-import yfinance as yf"""
+import yfinance as yf
+"""
 Voice-Based Finance Assistant - Streamlit App
 This app provides a voice interface for financial data and analysis.
 """
