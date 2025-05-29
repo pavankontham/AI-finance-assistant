@@ -1,6 +1,6 @@
 """
-Streamlit app for Finance Assistant - Cloud Deployment Version.
-This version is designed to run directly on Streamlit Cloud without requiring a separate API server.
+Voice-Based Finance Assistant - Streamlit App
+This app provides a voice interface for financial data and analysis.
 """
 import os
 import logging
@@ -11,8 +11,19 @@ import numpy as np
 import datetime
 import time
 import yfinance as yf
+import json
+import base64
 from data_ingestion.web_scraper import WebScraper
 from data_ingestion.market_data import MarketDataClient
+from data_ingestion.vector_store import VectorStore
+import requests
+from io import BytesIO
+import gtts
+from pydub import AudioSegment
+from pydub.playback import play
+import threading
+from agents.orchestrator import AgentOrchestrator
+from agents.voice_agent import VoiceAgent
 
 # Load environment variables
 load_dotenv()
@@ -21,16 +32,31 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize data clients
+# Initialize data clients and agents
 web_scraper = WebScraper()
 market_data_client = MarketDataClient()
+vector_store = VectorStore()
+voice_agent = VoiceAgent()
+orchestrator = AgentOrchestrator(market_data_client, web_scraper, vector_store)
 
 # App title and configuration
 st.set_page_config(
-    page_title="Finance Assistant",
-    page_icon="💹",
+    page_title="Voice Finance Assistant",
+    page_icon="🎙️",
     layout="wide"
 )
+
+# Initialize session state
+if 'audio_bytes' not in st.session_state:
+    st.session_state.audio_bytes = None
+if 'voice_response' not in st.session_state:
+    st.session_state.voice_response = None
+if 'conversation_history' not in st.session_state:
+    st.session_state.conversation_history = []
+if 'last_query' not in st.session_state:
+    st.session_state.last_query = ""
+if 'last_response' not in st.session_state:
+    st.session_state.last_response = ""
 
 # Apply custom CSS
 st.markdown("""
@@ -63,33 +89,86 @@ st.markdown("""
         padding: 0.2rem;
         border-radius: 3px;
     }
+    .voice-button {
+        background-color: #1E88E5;
+        color: white;
+        border-radius: 50%;
+        width: 100px;
+        height: 100px;
+        font-size: 1.5rem;
+        margin: 1rem auto;
+        display: block;
+    }
+    .chat-message {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .user-message {
+        background-color: #e3f2fd;
+        border-left: 4px solid #1E88E5;
+    }
+    .assistant-message {
+        background-color: #f1f8e9;
+        border-left: 4px solid #4CAF50;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+def text_to_speech(text):
+    """Convert text to speech and return audio bytes."""
+    try:
+        tts = gtts.gTTS(text=text, lang="en")
+        audio_bytes_io = BytesIO()
+        tts.write_to_fp(audio_bytes_io)
+        audio_bytes_io.seek(0)
+        return audio_bytes_io.read()
+    except Exception as e:
+        logger.error(f"Error in text-to-speech conversion: {e}")
+        return None
+
+def process_voice_query(audio_bytes):
+    """Process voice query and return response."""
+    try:
+        # Convert speech to text using the voice agent
+        query_text = voice_agent.speech_to_text(audio_bytes)
+        if not query_text:
+            return "Sorry, I couldn't understand what you said. Please try again."
+        
+        st.session_state.last_query = query_text
+        
+        # Process the query through the orchestrator
+        response = orchestrator.process_query(query_text)
+        
+        # Add to conversation history
+        st.session_state.conversation_history.append({"role": "user", "content": query_text})
+        st.session_state.conversation_history.append({"role": "assistant", "content": response})
+        
+        st.session_state.last_response = response
+        
+        # Convert response to speech
+        audio_bytes = text_to_speech(response)
+        st.session_state.audio_bytes = audio_bytes
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error processing voice query: {e}")
+        return f"An error occurred: {str(e)}"
+
 def get_market_overview():
     """Get an overview of major market indices."""
-    indices = [
-        "^DJI",    # Dow Jones
-        "^GSPC",   # S&P 500
-        "^IXIC",   # NASDAQ
-        "^N225",   # Nikkei 225
-        "^HSI",    # Hang Seng
-        "^FTSE"    # FTSE 100
-    ]
-    
     try:
-        # Get real-time market data
-        market_data = web_scraper.get_realtime_market_data(indices)
+        # Get market data from the market data client
+        market_summary = market_data_client.get_market_summary()
         
         # Create a DataFrame for display
         data = []
-        for symbol, info in market_data.items():
+        for index_info in market_summary.get("indices", []):
             data.append({
-                "Index": info.get("name", symbol),
-                "Price": info.get("price", 0),
-                "Change": info.get("change", 0),
-                "Change %": info.get("change_percent", 0),
-                "Source": info.get("source", "Unknown")
+                "Index": index_info.get("name", "Unknown"),
+                "Price": index_info.get("price", 0),
+                "Change": index_info.get("change", 0),
+                "Change %": index_info.get("change_percent", 0)
             })
         
         return pd.DataFrame(data)
@@ -97,75 +176,159 @@ def get_market_overview():
         logger.error(f"Error getting market overview: {e}")
         # Return dummy data if there's an error
         return pd.DataFrame([
-            {"Index": "Dow Jones", "Price": 34567.89, "Change": 123.45, "Change %": 0.36, "Source": "Fallback Data"},
-            {"Index": "S&P 500", "Price": 4567.89, "Change": 23.45, "Change %": 0.52, "Source": "Fallback Data"},
-            {"Index": "NASDAQ", "Price": 14567.89, "Change": 123.45, "Change %": 0.85, "Source": "Fallback Data"},
-            {"Index": "Nikkei 225", "Price": 28567.89, "Change": -123.45, "Change %": -0.43, "Source": "Fallback Data"},
-            {"Index": "Hang Seng", "Price": 24567.89, "Change": -23.45, "Change %": -0.10, "Source": "Fallback Data"},
-            {"Index": "FTSE 100", "Price": 7567.89, "Change": 23.45, "Change %": 0.31, "Source": "Fallback Data"}
+            {"Index": "Dow Jones", "Price": 34567.89, "Change": 123.45, "Change %": 0.36},
+            {"Index": "S&P 500", "Price": 4567.89, "Change": 23.45, "Change %": 0.52},
+            {"Index": "NASDAQ", "Price": 14567.89, "Change": 123.45, "Change %": 0.85},
+            {"Index": "Nikkei 225", "Price": 28567.89, "Change": -123.45, "Change %": -0.43},
+            {"Index": "Hang Seng", "Price": 24567.89, "Change": -23.45, "Change %": -0.10},
+            {"Index": "FTSE 100", "Price": 7567.89, "Change": 23.45, "Change %": 0.31}
         ])
 
-def get_stock_data(symbol, period="1mo"):
-    """Get historical stock data."""
+def get_portfolio_exposure(region=None, sector=None):
+    """Get portfolio exposure data."""
     try:
-        stock = yf.Ticker(symbol)
-        hist = stock.history(period=period)
+        # Get portfolio data from the market data client
+        portfolio_data = market_data_client.get_portfolio_exposure(region, sector)
         
-        if hist.empty:
-            raise ValueError(f"No data found for symbol: {symbol}")
-            
-        return hist
+        # Extract the portfolio holdings
+        holdings = portfolio_data.get("portfolio", [])
+        
+        # Create a DataFrame for display
+        data = []
+        for holding in holdings:
+            data.append({
+                "Symbol": holding.get("symbol", ""),
+                "Name": holding.get("name", ""),
+                "Value": holding.get("value", 0),
+                "Shares": holding.get("shares", 0),
+                "Sector": holding.get("sector", ""),
+                "Region": holding.get("region", "")
+            })
+        
+        return pd.DataFrame(data)
     except Exception as e:
-        logger.error(f"Error getting stock data for {symbol}: {e}")
-        # Return dummy data
-        dates = pd.date_range(end=datetime.datetime.now(), periods=30)
-        return pd.DataFrame({
-            'Open': np.random.normal(100, 5, len(dates)),
-            'High': np.random.normal(105, 5, len(dates)),
-            'Low': np.random.normal(95, 5, len(dates)),
-            'Close': np.random.normal(100, 5, len(dates)),
-            'Volume': np.random.randint(1000000, 10000000, len(dates))
-        }, index=dates)
+        logger.error(f"Error getting portfolio exposure: {e}")
+        # Return dummy data if there's an error
+        return pd.DataFrame([
+            {"Symbol": "AAPL", "Name": "Apple Inc.", "Value": 120000, "Shares": 500, "Sector": "Technology", "Region": "North America"},
+            {"Symbol": "MSFT", "Name": "Microsoft Corp.", "Value": 100000, "Shares": 300, "Sector": "Technology", "Region": "North America"},
+            {"Symbol": "TSM", "Name": "Taiwan Semiconductor", "Value": 40000, "Shares": 400, "Sector": "Technology", "Region": "Asia"},
+            {"Symbol": "9988.HK", "Name": "Alibaba Group", "Value": 35000, "Shares": 1500, "Sector": "Consumer Cyclical", "Region": "Asia"},
+            {"Symbol": "SONY", "Name": "Sony Group Corp.", "Value": 22000, "Shares": 250, "Sector": "Technology", "Region": "Asia"}
+        ])
 
-def get_financial_news(query="", max_results=5):
-    """Get financial news articles."""
+def get_earnings_surprises(days=30, sector=None):
+    """Get earnings surprises data."""
     try:
-        news = web_scraper.get_financial_news(query, max_results)
-        return news
+        # Get earnings data from the market data client
+        earnings_data = market_data_client.get_earnings_surprises(days, sector)
+        
+        # Extract the surprises
+        surprises = earnings_data.get("surprises", [])
+        
+        # Create a DataFrame for display
+        data = []
+        for surprise in surprises:
+            data.append({
+                "Symbol": surprise.get("symbol", ""),
+                "Company": surprise.get("name", ""),
+                "Expected EPS": surprise.get("expected_eps", 0),
+                "Actual EPS": surprise.get("actual_eps", 0),
+                "Surprise %": surprise.get("surprise_percent", 0),
+                "Date": surprise.get("date", ""),
+                "Sector": surprise.get("sector", "")
+            })
+        
+        return pd.DataFrame(data)
     except Exception as e:
-        logger.error(f"Error getting news: {e}")
-        # Return dummy news
-        return [
-            {
-                "title": "Markets rally on positive economic data",
-                "url": "https://example.com/news/1",
-                "source": "Financial Times",
-                "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "summary": "Stock markets rallied today after better-than-expected economic data."
-            },
-            {
-                "title": "Tech stocks lead market gains",
-                "url": "https://example.com/news/2",
-                "source": "CNBC",
-                "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "summary": "Technology stocks led market gains as investors bet on continued growth."
-            }
-        ]
+        logger.error(f"Error getting earnings surprises: {e}")
+        # Return dummy data if there's an error
+        return pd.DataFrame([
+            {"Symbol": "AAPL", "Company": "Apple Inc.", "Expected EPS": 1.45, "Actual EPS": 1.52, "Surprise %": 4.83, "Date": "2023-04-28", "Sector": "Technology"},
+            {"Symbol": "MSFT", "Company": "Microsoft Corp.", "Expected EPS": 2.23, "Actual EPS": 2.35, "Surprise %": 5.38, "Date": "2023-04-25", "Sector": "Technology"},
+            {"Symbol": "GOOGL", "Company": "Alphabet Inc.", "Expected EPS": 1.34, "Actual EPS": 1.44, "Surprise %": 7.46, "Date": "2023-04-25", "Sector": "Communication Services"},
+            {"Symbol": "META", "Company": "Meta Platforms Inc.", "Expected EPS": 2.56, "Actual EPS": 2.20, "Surprise %": -14.06, "Date": "2023-04-26", "Sector": "Communication Services"},
+            {"Symbol": "AMZN", "Company": "Amazon.com Inc.", "Expected EPS": 0.21, "Actual EPS": 0.31, "Surprise %": 47.62, "Date": "2023-04-27", "Sector": "Consumer Cyclical"}
+        ])
 
 def main():
     """Main function to run the Streamlit app."""
     # Header
-    st.markdown("<h1 class='main-header'>Finance Assistant</h1>", unsafe_allow_html=True)
-    st.markdown("Your AI-powered financial data and analysis tool")
+    st.markdown("<h1 class='main-header'>Voice Finance Assistant</h1>", unsafe_allow_html=True)
+    st.markdown("Your AI-powered financial data and analysis tool with voice interface")
     
     # Sidebar
-    st.sidebar.image("https://img.icons8.com/color/96/000000/financial-growth.png", width=100)
+    st.sidebar.image("https://img.icons8.com/color/96/000000/voice-recognition.png", width=100)
     st.sidebar.title("Navigation")
     
     # Navigation
-    page = st.sidebar.radio("Go to", ["Market Overview", "Stock Analysis", "Financial News", "Portfolio Analysis"])
+    page = st.sidebar.radio("Go to", ["Voice Assistant", "Market Overview", "Portfolio Analysis", "Earnings Surprises"])
     
-    if page == "Market Overview":
+    if page == "Voice Assistant":
+        st.markdown("<h2 class='sub-header'>Voice Assistant</h2>", unsafe_allow_html=True)
+        
+        # Example queries
+        st.markdown("### Example Queries:")
+        st.markdown("- What's our risk exposure in Asia tech stocks today?")
+        st.markdown("- Highlight any earnings surprises in the technology sector.")
+        st.markdown("- Give me a summary of today's market performance.")
+        
+        # Voice input
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.markdown("### Speak your query:")
+            
+            # Record audio button
+            if st.button("🎙️ Hold to Record", key="record"):
+                with st.spinner("Listening..."):
+                    # In a real implementation, this would record audio
+                    # For this demo, we'll simulate a voice query
+                    st.session_state.last_query = "What's our risk exposure in Asia tech stocks today, and highlight any earnings surprises?"
+                    
+                    # Process the query
+                    response = orchestrator.process_query(st.session_state.last_query)
+                    st.session_state.last_response = response
+                    
+                    # Add to conversation history
+                    st.session_state.conversation_history.append({"role": "user", "content": st.session_state.last_query})
+                    st.session_state.conversation_history.append({"role": "assistant", "content": response})
+                    
+                    # Generate audio response
+                    st.session_state.audio_bytes = text_to_speech(response)
+        
+        with col2:
+            # Text input as an alternative
+            text_query = st.text_input("Or type your query:", key="text_query")
+            if st.button("Submit"):
+                if text_query:
+                    with st.spinner("Processing..."):
+                        st.session_state.last_query = text_query
+                        
+                        # Process the query
+                        response = orchestrator.process_query(text_query)
+                        st.session_state.last_response = response
+                        
+                        # Add to conversation history
+                        st.session_state.conversation_history.append({"role": "user", "content": text_query})
+                        st.session_state.conversation_history.append({"role": "assistant", "content": response})
+                        
+                        # Generate audio response
+                        st.session_state.audio_bytes = text_to_speech(response)
+        
+        # Display the audio player if audio is available
+        if st.session_state.audio_bytes:
+            st.audio(st.session_state.audio_bytes, format="audio/mp3")
+        
+        # Display conversation history
+        st.markdown("### Conversation History:")
+        for message in st.session_state.conversation_history:
+            if message["role"] == "user":
+                st.markdown(f"<div class='chat-message user-message'><strong>You:</strong> {message['content']}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='chat-message assistant-message'><strong>Assistant:</strong> {message['content']}</div>", unsafe_allow_html=True)
+    
+    elif page == "Market Overview":
         st.markdown("<h2 class='sub-header'>Market Overview</h2>", unsafe_allow_html=True)
         
         # Show loading spinner while fetching data
@@ -187,7 +350,7 @@ def main():
         # Get some historical data for S&P 500
         with st.spinner("Loading market trends..."):
             try:
-                sp500_data = get_stock_data("^GSPC", period="6mo")
+                sp500_data = yf.Ticker("^GSPC").history(period="6mo")
                 
                 # Create a line chart
                 st.line_chart(sp500_data['Close'])
@@ -195,143 +358,112 @@ def main():
             except Exception as e:
                 st.error(f"Error loading market trends: {e}")
     
-    elif page == "Stock Analysis":
-        st.markdown("<h2 class='sub-header'>Stock Analysis</h2>", unsafe_allow_html=True)
-        
-        # Stock search
-        stock_symbol = st.text_input("Enter stock symbol (e.g., AAPL, MSFT, GOOGL)", "AAPL")
-        period = st.select_slider("Select time period", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="3mo")
-        
-        if st.button("Analyze"):
-            with st.spinner(f"Analyzing {stock_symbol}..."):
-                # Get stock data
-                stock_data = get_stock_data(stock_symbol, period)
-                
-                if not stock_data.empty:
-                    # Display stock info
-                    st.markdown(f"<div class='card'><h3>{stock_symbol} Stock Analysis</h3></div>", unsafe_allow_html=True)
-                    
-                    # Price chart
-                    st.subheader("Price Chart")
-                    st.line_chart(stock_data['Close'])
-                    
-                    # Volume chart
-                    st.subheader("Volume Chart")
-                    st.bar_chart(stock_data['Volume'])
-                    
-                    # Statistics
-                    st.markdown("<h3 class='sub-header'>Statistics</h3>", unsafe_allow_html=True)
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("Current Price", f"${stock_data['Close'].iloc[-1]:.2f}", 
-                                 f"{((stock_data['Close'].iloc[-1] - stock_data['Close'].iloc[-2]) / stock_data['Close'].iloc[-2] * 100):.2f}%")
-                    
-                    with col2:
-                        st.metric("Average Volume", f"{stock_data['Volume'].mean():.0f}")
-                    
-                    with col3:
-                        st.metric("Price Change (%)", 
-                                 f"{((stock_data['Close'].iloc[-1] - stock_data['Close'].iloc[0]) / stock_data['Close'].iloc[0] * 100):.2f}%")
-                    
-                    # More statistics
-                    stats_df = pd.DataFrame({
-                        'Statistic': ['High', 'Low', 'Average', 'Std Dev', 'Min', 'Max'],
-                        'Value': [
-                            f"${stock_data['High'].max():.2f}",
-                            f"${stock_data['Low'].min():.2f}",
-                            f"${stock_data['Close'].mean():.2f}",
-                            f"${stock_data['Close'].std():.2f}",
-                            f"${stock_data['Close'].min():.2f}",
-                            f"${stock_data['Close'].max():.2f}"
-                        ]
-                    })
-                    
-                    st.dataframe(stats_df, use_container_width=True)
-                else:
-                    st.error(f"No data found for symbol: {stock_symbol}")
-    
-    elif page == "Financial News":
-        st.markdown("<h2 class='sub-header'>Financial News</h2>", unsafe_allow_html=True)
-        
-        # News search
-        query = st.text_input("Search for news (leave blank for general financial news)", "")
-        max_results = st.slider("Number of articles", 3, 10, 5)
-        
-        if st.button("Get News"):
-            with st.spinner("Fetching news articles..."):
-                news_articles = get_financial_news(query, max_results)
-                
-                if news_articles:
-                    for article in news_articles:
-                        st.markdown(f"""
-                        <div class='card'>
-                            <h3>{article['title']}</h3>
-                            <p><strong>Source:</strong> {article['source']} | <strong>Date:</strong> {article['date']}</p>
-                            <p>{article['summary']}</p>
-                            <a href="{article['url']}" target="_blank">Read more</a>
-                        </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.info("No news articles found. Try a different search term.")
-    
     elif page == "Portfolio Analysis":
         st.markdown("<h2 class='sub-header'>Portfolio Analysis</h2>", unsafe_allow_html=True)
-        st.info("This is a demo of portfolio analysis functionality. In a real application, this would connect to your actual portfolio data.")
         
-        # Demo portfolio
-        portfolio_data = {
-            'Symbol': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'],
-            'Shares': [10, 5, 2, 3, 8],
-            'Purchase Price': [150.75, 280.50, 2800.00, 3200.00, 750.25],
-            'Current Price': [175.25, 320.75, 2950.50, 3400.00, 800.50],
-            'Sector': ['Technology', 'Technology', 'Technology', 'Consumer Cyclical', 'Automotive']
-        }
+        # Region and sector filters
+        col1, col2 = st.columns(2)
         
-        portfolio_df = pd.DataFrame(portfolio_data)
-        portfolio_df['Market Value'] = portfolio_df['Shares'] * portfolio_df['Current Price']
-        portfolio_df['Cost Basis'] = portfolio_df['Shares'] * portfolio_df['Purchase Price']
-        portfolio_df['Gain/Loss'] = portfolio_df['Market Value'] - portfolio_df['Cost Basis']
-        portfolio_df['Gain/Loss %'] = (portfolio_df['Gain/Loss'] / portfolio_df['Cost Basis'] * 100).round(2)
+        with col1:
+            region = st.selectbox("Filter by Region", ["All Regions", "North America", "Asia", "Europe", "South America"])
+        
+        with col2:
+            sector = st.selectbox("Filter by Sector", ["All Sectors", "Technology", "Consumer Cyclical", "Communication Services", "Financial Services", "Energy"])
+        
+        # Apply filters
+        region_filter = None if region == "All Regions" else region
+        sector_filter = None if sector == "All Sectors" else sector
+        
+        # Get portfolio data
+        with st.spinner("Loading portfolio data..."):
+            portfolio_df = get_portfolio_exposure(region_filter, sector_filter)
         
         # Display portfolio
-        st.dataframe(
-            portfolio_df.style.applymap(
-                lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
-                subset=['Gain/Loss', 'Gain/Loss %']
-            ),
-            use_container_width=True
-        )
+        st.dataframe(portfolio_df, use_container_width=True)
         
         # Portfolio metrics
-        total_value = portfolio_df['Market Value'].sum()
-        total_cost = portfolio_df['Cost Basis'].sum()
-        total_gain_loss = portfolio_df['Gain/Loss'].sum()
-        total_gain_loss_pct = (total_gain_loss / total_cost * 100).round(2)
+        total_value = portfolio_df['Value'].sum()
         
-        col1, col2, col3 = st.columns(3)
+        # Calculate allocation by region and sector
+        region_allocation = portfolio_df.groupby('Region')['Value'].sum() / total_value * 100
+        sector_allocation = portfolio_df.groupby('Sector')['Value'].sum() / total_value * 100
+        
+        # Display metrics
+        st.markdown("<h3 class='sub-header'>Portfolio Metrics</h3>", unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
         
         with col1:
             st.metric("Total Portfolio Value", f"${total_value:,.2f}")
+            st.metric("Number of Holdings", len(portfolio_df))
         
         with col2:
-            st.metric("Total Gain/Loss", f"${total_gain_loss:,.2f}", f"{total_gain_loss_pct}%")
-        
-        with col3:
-            st.metric("Number of Holdings", len(portfolio_df))
+            if region_filter:
+                region_pct = region_allocation.get(region_filter, 0)
+                st.metric(f"{region_filter} Allocation", f"{region_pct:.2f}%")
+            
+            if sector_filter:
+                sector_pct = sector_allocation.get(sector_filter, 0)
+                st.metric(f"{sector_filter} Allocation", f"{sector_pct:.2f}%")
         
         # Portfolio visualizations
         st.markdown("<h3 class='sub-header'>Portfolio Allocation</h3>", unsafe_allow_html=True)
         
-        # Sector allocation pie chart
-        sector_allocation = portfolio_df.groupby('Sector')['Market Value'].sum()
-        st.subheader("Sector Allocation")
-        st.bar_chart(sector_allocation)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("By Region")
+            st.bar_chart(region_allocation)
+        
+        with col2:
+            st.subheader("By Sector")
+            st.bar_chart(sector_allocation)
+    
+    elif page == "Earnings Surprises":
+        st.markdown("<h2 class='sub-header'>Earnings Surprises</h2>", unsafe_allow_html=True)
+        
+        # Filters
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            days = st.slider("Lookback Period (Days)", 7, 90, 30)
+        
+        with col2:
+            sector = st.selectbox("Filter by Sector", ["All Sectors", "Technology", "Consumer Cyclical", "Communication Services", "Financial Services", "Energy"])
+        
+        # Apply filters
+        sector_filter = None if sector == "All Sectors" else sector
+        
+        # Get earnings data
+        with st.spinner("Loading earnings data..."):
+            earnings_df = get_earnings_surprises(days, sector_filter)
+        
+        # Display earnings surprises
+        st.dataframe(
+            earnings_df.style.applymap(
+                lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
+                subset=['Surprise %']
+            ),
+            use_container_width=True
+        )
+        
+        # Visualizations
+        st.markdown("<h3 class='sub-header'>Earnings Analysis</h3>", unsafe_allow_html=True)
+        
+        if not earnings_df.empty:
+            # Top positive surprises
+            st.subheader("Top Positive Surprises")
+            top_positive = earnings_df.sort_values(by='Surprise %', ascending=False).head(5)
+            st.bar_chart(top_positive.set_index('Symbol')['Surprise %'])
+            
+            # Top negative surprises
+            st.subheader("Top Negative Surprises")
+            top_negative = earnings_df.sort_values(by='Surprise %').head(5)
+            st.bar_chart(top_negative.set_index('Symbol')['Surprise %'])
     
     # Footer
     st.markdown("---")
-    st.markdown("<div class='info-text'>Finance Assistant - Powered by AI</div>", unsafe_allow_html=True)
+    st.markdown("<div class='info-text'>Voice Finance Assistant - Powered by AI</div>", unsafe_allow_html=True)
     st.markdown("<div class='info-text'>Data provided for informational purposes only. Not financial advice.</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
